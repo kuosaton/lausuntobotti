@@ -1,8 +1,0 @@
-version: 2
-updates:
-  - package-ecosystem: "uv"
-    directory: "/" # Location of package manifests
-    schedule:
-      interval: "weekly"
-    cooldown:
-      default-days: 7 # match uv's exclude-newer 7d setting
