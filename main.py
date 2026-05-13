@@ -78,8 +78,12 @@ def cmd_update_context() -> None:
     print("Fetching Kuluttajaliitto lausunnot...", flush=True)
     with httpx.Client() as client:
         statements = fetch_statements(client, per_page=100)
-    ctx = build_context(statements)
-    _save_context(ctx)
+    new_ctx = build_context(statements)
+    existing = _load_context()
+    if new_ctx["recent_statements"] == existing["recent_statements"]:
+        print(f"Context unchanged ({len(statements)} statements, already up to date).")
+        return
+    _save_context(new_ctx)
     print(f"Saved {len(statements)} statements to {config.CONTEXT_PATH}")
 
 

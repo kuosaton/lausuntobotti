@@ -180,11 +180,44 @@ def test_cmd_update_context_fetches_and_saves(monkeypatch) -> None:
         ]
 
     monkeypatch.setattr(main, "fetch_statements", fake_fetch_statements)
-    monkeypatch.setattr(main, "build_context", lambda statements: {"recent_statements": []})
+    monkeypatch.setattr(
+        main, "build_context", lambda statements: {"recent_statements": [{"title": "T"}]}
+    )
+    monkeypatch.setattr(
+        main, "_load_context", lambda: {"last_updated": None, "recent_statements": []}
+    )
     monkeypatch.setattr(main, "_save_context", lambda ctx: captured.update({"ctx": ctx}))
 
     main.cmd_update_context()
-    assert captured["ctx"] == {"recent_statements": []}
+    assert captured["ctx"] == {"recent_statements": [{"title": "T"}]}
+
+
+def test_cmd_update_context_skips_save_when_unchanged(monkeypatch, capsys) -> None:
+    statements = [{"title": "T", "date": "2026-04-22", "excerpt": "E", "url": "u", "tags": []}]
+
+    class FakeClient:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr(main.httpx, "Client", FakeClient)
+    monkeypatch.setattr(main, "fetch_statements", lambda client, per_page: [])
+    monkeypatch.setattr(main, "build_context", lambda stmts: {"recent_statements": statements})
+    monkeypatch.setattr(
+        main,
+        "_load_context",
+        lambda: {"last_updated": "2026-04-22", "recent_statements": statements},
+    )
+
+    saved = {"called": False}
+    monkeypatch.setattr(main, "_save_context", lambda ctx: saved.__setitem__("called", True))
+
+    main.cmd_update_context()
+
+    assert not saved["called"]
+    assert "already up to date" in capsys.readouterr().out
 
 
 def test_cmd_daily_handles_scoring_exception(state_paths, monkeypatch) -> None:
