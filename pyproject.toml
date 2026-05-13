@@ -37,6 +37,14 @@ ignore = [
 
 [tool.coverage.run]
 branch = true
+omit = ["tests/*", "scripts/*"]
+
+[tool.coverage.report]
+exclude_also = [
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError",
+    "pragma: no cover",
+]
 
 [tool.pyright]
 pythonVersion = "3.14"
