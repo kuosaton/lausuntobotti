@@ -3,15 +3,15 @@
 [![CI](https://github.com/kuosaton/lausuntobotti/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/kuosaton/lausuntobotti/actions/workflows/ci.yml) [![codecov](https://codecov.io/gh/kuosaton/lausuntobotti/graph/badge.svg?token=DM3PJTS30G)](https://codecov.io/gh/kuosaton/lausuntobotti) [![Python Version from PEP 621 TOML](https://img.shields.io/python/required-version-toml?tomlFilePath=https%3A%2F%2Fraw.githubusercontent.com%2Fkuosaton%2Flausuntobotti%2Frefs%2Fheads%2Fmain%2Fpyproject.toml&logo=python&logoColor=white)](https://www.python.org/)
 [![uv package manager](https://img.shields.io/badge/uv-package%20manager?logo=uv&label=package%20manager&color=%23DE5FE9)](https://docs.astral.sh/uv/)
 
-Lausuntobotti is an LLM-based tool to help [Kuluttajaliitto](https://www.kuluttajaliitto.fi/) keep up with [lausuntopalvelu.fi](https://www.lausuntopalvelu.fi). It scores new statement requests with [Claude](https://claude.com/product/overview), highlights the most relevant ones, and sends email digests to the chosen recipients.
+Lausuntobotti is an LLM-based monitoring tool that helps [Kuluttajaliitto](https://www.kuluttajaliitto.fi/) keep up with new public consultation requests and parliamentary committee agendas. It scores new items from [lausuntopalvelu.fi](https://www.lausuntopalvelu.fi) and Eduskunta committee proceedings with [Claude](https://claude.com/product/overview), highlights the most relevant ones, and sends email digests to the chosen recipients.
 
 <p align="center"> <img src=".github/assets/lausuntobotti_digest_example.png" width="700px" alt="Lausuntobotti email digest example"></p>
 
 ## How it works
 
-The bot is designed to uncover proposals that: (i) are relevant to Kuluttajaliitto and (ii) Kuluttajaliitto has not already been made aware of.
+The bot is designed to uncover public policy items that are relevant to Kuluttajaliitto and may otherwise be easy to miss.
 
-For new proposals, the bot:
+For new lausuntopalvelu.fi proposals, the lausuntopyyntö check:
 
 1. **Ignores ones with Kuluttajaliitto on the distribution list (jakelulista)**: the requesting organisation has already identified Kuluttajaliitto as a relevant party and will notify them directly.
 2. **Ignores ones that Kuluttajaliitto has already responded to.**
@@ -19,26 +19,35 @@ For new proposals, the bot:
 4. **Flags high-scoring proposals for review** (score ≥ 6).
 5. **Notifies designated recipients** of new flagged proposals via an HTML email digest.
 
+For Eduskunta committee agendas, the valiokunta check:
+
+1. **Fetches new committee agenda documents** from configured committee pages.
+2. **Fetches the full agenda XML from VaskiData** for each new agenda.
+3. **Extracts scheduled matters** such as government proposals and EU matters.
+4. **Scores each matter from 0 to 10** using the same Kuluttajaliitto context.
+5. **Sends a valiokunta digest** with matters above the notification threshold.
+
 ### Data sources
 
 All data comes from publicly accessible sources:
 
 - **[lausuntopalvelu.fi Open API](https://www.lausuntopalvelu.fi/api/v1/Lausuntopalvelu.svc)**: new requests for comment via the public OData/Atom feed; distribution lists and prior responses scraped from each proposal's participation page.
 - **[kuluttajaliitto.fi WordPress API](https://www.kuluttajaliitto.fi/wp-json/)**: Kuluttajaliitto's published statements, used as the corpus the scoring model compares new proposals against.
+- **[eduskunta.fi](https://www.eduskunta.fi/)** and **[avoindata.eduskunta.fi](https://avoindata.eduskunta.fi/)**: committee pages and VaskiData XML for parliamentary committee agendas.
 
 ### Relevancy scoring
 
-Each proposal is scored by Claude based on Kuluttajaliitto's previously published statements and areas of focus. The default model is [Claude Haiku 4.5](https://www.anthropic.com/news/claude-haiku-4-5), and the scoring model/settings are configurable. The rubric is:
+Each item is scored by Claude based on Kuluttajaliitto's previously published statements and areas of focus. The default model is [Claude Haiku 4.5](https://www.anthropic.com/news/claude-haiku-4-5), and the scoring model/settings are configurable. The rubric is:
 
 - 8 to 10: Clearly within Kuluttajaliitto's core mandate such as consumer protection, product safety, financial services, or housing.
 - 5 to 7: Concerns consumers indirectly, or is adjacent to Kuluttajaliitto's priorities.
 - 2 to 4: Thin connection to consumer matters.
 - 0 to 1: No clear connection to consumers or Kuluttajaliitto's work.
 
-The bot then acts on the score, printing a tag for each processed proposal:
+The bot then acts on the score, printing a tag for each processed item:
 
-- `SKIP DISTRIBUTION`: Kuluttajaliitto is on the distribution list, skipped without scoring.
-- `SKIP RESPONDED`: Kuluttajaliitto has already submitted a response, skipped without scoring.
+- `SKIP DISTRIBUTION`: Kuluttajaliitto is on the lausuntopalvelu.fi distribution list, skipped without scoring.
+- `SKIP RESPONDED`: Kuluttajaliitto has already submitted a lausuntopalvelu.fi response, skipped without scoring.
 - `FLAG x/10` (6 to 10): Included in the email digest.
 - `LOG x/10` (4 to 5): Logged only.
 - `DROP x/10` (0 to 3): Dropped silently.
@@ -100,13 +109,15 @@ cache_ttl = "5m"
 
 Edit this file for normal local experimentation. For deployment-specific overrides, set the optional `CLAUDE_SCORING_*` environment variables shown in `.env.example`; environment variables take precedence over `model_config.toml`.
 
-Haiku 4.5 is the default because Lausuntobotti does high-volume, short, structured relevance scoring. Sonnet 4.6 is a useful candidate for ambiguous or borderline items, but compare it against historical `score_log.jsonl` examples before switching globally. `max_tokens`, timeout, and cache settings are tuning knobs, not required setup.
+Haiku 4.5 is the default because Lausuntobotti does high-volume, short, structured relevance scoring. Sonnet 4.6 is a useful candidate for ambiguous or borderline items, but compare it against historical score log examples before switching globally. `max_tokens`, timeout, and cache settings are tuning knobs, not required setup.
 
-#### 3. Fetch up-to-date Kuluttajaliitto published statements context (required before first run)
+#### 3. Fetch up-to-date Kuluttajaliitto published statements context
 
 ```bash
 uv run python main.py --update-context
 ```
+
+Checks also refresh this context automatically when it is missing or older than 7 days.
 
 ### Using the tool
 
@@ -121,17 +132,24 @@ Use `h` in the menu, or `--help` on the command line, for the full list of optio
 Direct CLI examples:
 
 ```bash
-# Daily check: score new proposals and send the digest if any clear the threshold
-uv run python main.py --daily
-uv run python main.py --daily --dry-run    # score and log, but don't send
+# Lausuntopyyntö check: score new proposals and send the digest if any clear the threshold
+uv run python main.py --lausuntopyynnot
+uv run python main.py --lausuntopyynnot --dry-run    # score and log, but don't send
 
-# Full list of commands: refresh context, preview or resend digests, review borderline, reset state
+# Valiokunta check: score new agenda matters and send the committee digest
+uv run python main.py --valiokunta
+uv run python main.py --valiokunta --dry-run
+
+# Review borderline items from one or both logs
+uv run python main.py --review-logged --source both --days 7
+
+# Full list of commands: refresh context, preview or resend lausuntopyyntö digests, reset state
 uv run python main.py --help
 ```
 
-## Planned features
+### Valiokunta Analysis
 
-**Parliamentary committee analysis (`--weekly`, `--midweek`).** Kuluttajaliitto also needs to track proceedings in relevant parliamentary committees (talousvaliokunta, sosiaali- ja terveysvaliokunta). The planned commands would score new committee items using the same model and deliver them in a weekly digest.
+`--valiokunta` tracks new Talousvaliokunta agendas, fetches the agenda XML from VaskiData, extracts scheduled matters, scores them with the same Kuluttajaliitto context, and sends a valiokunta digest. Valiokunta digest replay/resend is not persisted yet; use `--valiokunta --dry-run` to preview a fresh run.
 
 ## Development
 
@@ -157,9 +175,10 @@ make mutation-results
 
 All state lives under `state/`:
 
-| File                  | Contents                                    |
-| --------------------- | ------------------------------------------- |
-| `seen_proposals.json` | Proposals already processed (deduplication) |
-| `score_log.jsonl`     | Full scoring history                        |
-| `nostetut.json`       | Items that crossed the notify threshold     |
-| `seen_documents.json` | Reserved for document-level deduplication   |
+| File                         | Contents                                    |
+| ---------------------------- | ------------------------------------------- |
+| `seen_proposals.json`        | Proposals already processed (deduplication) |
+| `score_log.jsonl`            | Lausuntopyyntö scoring history              |
+| `valiokunta_score_log.jsonl` | Valiokunta scoring history                  |
+| `nostetut.json`              | Items that crossed the notify threshold     |
+| `seen_documents.json`        | Committee agenda deduplication              |
