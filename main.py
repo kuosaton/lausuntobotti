@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from datetime import date as date_type
 from pathlib import Path
 from types import SimpleNamespace
+from typing import TypedDict
 
 import httpx
 from dotenv import load_dotenv
@@ -27,16 +28,24 @@ load_dotenv()
 # ---------------------------------------------------------------------------
 
 
-def _load_json(path: Path) -> dict:
+def _read_json[T](path: Path, default: T) -> T:
     if path.exists() and path.stat().st_size > 2:
         return json.loads(path.read_text(encoding="utf-8"))
-    return {}
+    return default
 
 
-def _save_json(path: Path, data: dict) -> None:
+def _load_json(path: Path) -> dict:
+    return _read_json(path, {})
+
+
+def _write_json_atomic(path: Path, data: object) -> None:
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     tmp.replace(path)
+
+
+def _save_json(path: Path, data: dict) -> None:
+    _write_json_atomic(path, data)
 
 
 def _append_log(entry: dict) -> None:
@@ -46,27 +55,17 @@ def _append_log(entry: dict) -> None:
 
 def _append_flagged(entry: dict) -> None:
     path = config.FLAGGED_PATH
-    items = (
-        json.loads(path.read_text(encoding="utf-8"))
-        if path.exists() and path.stat().st_size > 2
-        else []
-    )
+    items = _read_json(path, [])
     items.append(entry)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8")
-    tmp.replace(path)
+    _write_json_atomic(path, items)
 
 
 def _load_context() -> dict:
-    if config.CONTEXT_PATH.exists() and config.CONTEXT_PATH.stat().st_size > 2:
-        return json.loads(config.CONTEXT_PATH.read_text(encoding="utf-8"))
-    return {"last_updated": None, "recent_statements": []}
+    return _read_json(config.CONTEXT_PATH, {"last_updated": None, "recent_statements": []})
 
 
 def _save_context(ctx: dict) -> None:
-    tmp = config.CONTEXT_PATH.with_suffix(".tmp")
-    tmp.write_text(json.dumps(ctx, ensure_ascii=False, indent=2), encoding="utf-8")
-    tmp.replace(config.CONTEXT_PATH)
+    _write_json_atomic(config.CONTEXT_PATH, ctx)
 
 
 # ---------------------------------------------------------------------------
@@ -118,6 +117,23 @@ def _score_proposal(client: httpx.Client, proposal: Proposal, ctx: dict) -> dict
     return result
 
 
+def _build_scored_entry(p: Proposal, result: dict, timestamp: str) -> dict:
+    return {
+        "timestamp": timestamp,
+        "source": "lausuntopalvelu",
+        "id": p.id,
+        "title": p.title,
+        "score": result["score"],
+        "rationale": result.get("rationale", ""),
+        "themes": result.get("themes", []),
+        "jakelu_kuluttajaliitto": result["jakelu_kuluttajaliitto"],
+        "published_on": p.published_on.isoformat(),
+        "deadline": p.deadline.date().isoformat() if p.deadline else None,
+        "organization": p.organization_name,
+        "url": p.url,
+    }
+
+
 def _record_result(p: Proposal, result: dict, notified: bool, seen: dict) -> None:
     now = datetime.now(UTC).isoformat()
     seen[p.id] = {
@@ -128,23 +144,9 @@ def _record_result(p: Proposal, result: dict, notified: bool, seen: dict) -> Non
         "notified_at": now if notified else None,
         "published_on": p.published_on.isoformat(),
     }
-    _append_log(
-        {
-            "timestamp": now,
-            "source": "lausuntopalvelu",
-            "id": p.id,
-            "title": p.title,
-            "score": result["score"],
-            "rationale": result.get("rationale", ""),
-            "themes": result.get("themes", []),
-            "jakelu_kuluttajaliitto": result["jakelu_kuluttajaliitto"],
-            "notified": notified,
-            "published_on": p.published_on.isoformat(),
-            "deadline": p.deadline.date().isoformat() if p.deadline else None,
-            "organization": p.organization_name,
-            "url": p.url,
-        }
-    )
+    log_entry = _build_scored_entry(p, result, now)
+    log_entry["notified"] = notified
+    _append_log(log_entry)
 
 
 def _deliver_digest(
@@ -226,7 +228,6 @@ def cmd_daily(dry_run: bool) -> None:
                 continue
 
             score = result["score"]
-            on_distribution_list = result["jakelu_kuluttajaliitto"]
             notified = score >= config.NOTIFY_THRESHOLD and not dry_run
 
             _record_result(p, result, notified, seen)
@@ -234,22 +235,8 @@ def cmd_daily(dry_run: bool) -> None:
             if score >= config.NOTIFY_THRESHOLD:
                 print(f"  [FLAG {score}/10] {p.title}")
                 flagged.append({"proposal": p, **result})
-                _append_flagged(
-                    {
-                        "timestamp": datetime.now(UTC).isoformat(),
-                        "source": "lausuntopalvelu",
-                        "id": p.id,
-                        "title": p.title,
-                        "score": score,
-                        "rationale": result.get("rationale", ""),
-                        "themes": result.get("themes", []),
-                        "jakelu_kuluttajaliitto": on_distribution_list,
-                        "published_on": p.published_on.isoformat(),
-                        "deadline": p.deadline.date().isoformat() if p.deadline else None,
-                        "organization": p.organization_name,
-                        "url": p.url,
-                    }
-                )
+                flagged_entry = _build_scored_entry(p, result, datetime.now(UTC).isoformat())
+                _append_flagged(flagged_entry)
             elif score >= config.LOG_THRESHOLD:
                 print(f"  [LOG {score}/10] {p.title}")
                 borderline.append({"proposal": p, **result})
@@ -305,6 +292,41 @@ def _read_borderline_entries(days: int = 7) -> list[dict]:
     return entries
 
 
+def _parse_date_only(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = date_type.fromisoformat(value)
+    except ValueError:
+        return None
+    return datetime(parsed.year, parsed.month, parsed.day)
+
+
+def _parse_datetime(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def _build_proposal(entry: dict, *, skip_expired: bool) -> SimpleNamespace | None:
+    deadline = _parse_date_only(entry.get("deadline"))
+    published_on = _parse_datetime(entry.get("published_on"))
+    if skip_expired and deadline is not None:
+        today = datetime.now(UTC).date()
+        if deadline.date() < today:
+            return None
+    return SimpleNamespace(
+        title=entry.get("title", ""),
+        organization_name=entry.get("organization") or "-",
+        deadline=deadline,
+        published_on=published_on,
+        url=entry.get("url", ""),
+    )
+
+
 def cmd_review_logged(days: int = 7) -> None:
     entries = _read_borderline_entries(days)
     if not entries:
@@ -325,29 +347,9 @@ def _load_flagged() -> list[dict]:
     items = json.loads(config.FLAGGED_PATH.read_text(encoding="utf-8"))
     flagged = []
     for e in items:
-        deadline = None
-        if e.get("deadline"):
-            try:
-                d = date_type.fromisoformat(e["deadline"])
-                deadline = datetime(d.year, d.month, d.day)
-            except ValueError:
-                pass
-        published_on = None
-        if e.get("published_on"):
-            try:
-                published_on = datetime.fromisoformat(e["published_on"])
-            except ValueError:
-                pass
-        today = datetime.now(UTC).date()
-        if deadline is not None and deadline.date() < today:
+        proposal = _build_proposal(e, skip_expired=True)
+        if proposal is None:
             continue
-        proposal = SimpleNamespace(
-            title=e.get("title", ""),
-            organization_name=e.get("organization") or "-",
-            deadline=deadline,
-            published_on=published_on,
-            url=e.get("url", ""),
-        )
         flagged.append(
             {
                 "proposal": proposal,
@@ -363,26 +365,9 @@ def _load_borderline(days: int = 7) -> list[dict]:
     """Return borderline items from the score log within the last `days` days."""
     items = []
     for entry in _read_borderline_entries(days):
-        published_on = None
-        if entry.get("published_on"):
-            try:
-                published_on = datetime.fromisoformat(entry["published_on"])
-            except ValueError:
-                pass
-        deadline = None
-        if entry.get("deadline"):
-            try:
-                d = date_type.fromisoformat(entry["deadline"])
-                deadline = datetime(d.year, d.month, d.day)
-            except ValueError:
-                pass
-        proposal = SimpleNamespace(
-            title=entry.get("title", ""),
-            organization_name=entry.get("organization") or "-",
-            deadline=deadline,
-            published_on=published_on,
-            url=entry.get("url", ""),
-        )
+        proposal = _build_proposal(entry, skip_expired=False)
+        if proposal is None:
+            continue
         items.append(
             {
                 "proposal": proposal,
@@ -429,69 +414,186 @@ def cmd_reset_state() -> None:
     print("State reset.")
 
 
+def _run_daily(dry_run: bool) -> None:
+    cmd_daily(dry_run=dry_run)
+
+
+def _run_weekly(dry_run: bool) -> None:
+    cmd_weekly(dry_run=dry_run)
+
+
+def _run_midweek(dry_run: bool) -> None:
+    cmd_midweek(dry_run=dry_run)
+
+
+def _run_review(days: int) -> None:
+    cmd_review_logged(days=days)
+
+
+def _run_preview(days: int | None = None) -> None:
+    if days is None:
+        cmd_preview_digest()
+    else:
+        cmd_preview_digest(days=days)
+
+
+def _run_resend(dry_run: bool, days: int | None = None) -> None:
+    if days is None:
+        cmd_resend_digest(dry_run=dry_run)
+    else:
+        cmd_resend_digest(dry_run=dry_run, days=days)
+
+
+def _dispatch_cli(args: argparse.Namespace) -> None:
+    actions: list[tuple[str, Callable[[], None]]] = [
+        ("update_context", cmd_update_context),
+        ("daily", lambda: _run_daily(args.dry_run)),
+        ("weekly", lambda: _run_weekly(args.dry_run)),
+        ("midweek", lambda: _run_midweek(args.dry_run)),
+        ("review_logged", lambda: _run_review(args.days)),
+        ("preview_digest", lambda: _run_preview(args.days)),
+        ("resend_digest", lambda: _run_resend(args.dry_run, args.days)),
+        ("reset_state", cmd_reset_state),
+        ("interactive", cmd_interactive),
+    ]
+    for flag, action in actions:
+        if getattr(args, flag):
+            action()
+
+
 # ---------------------------------------------------------------------------
 # Interactive UI
 # ---------------------------------------------------------------------------
 
-_MENU = """
-Lausuntobotti
-─────────────────────────────────────
-1  Daily check
-2  Daily check (dry run)
-3  Update Kuluttajaliitto context
-4  Review borderline items (7 days)
-5  Review borderline items (custom range)
-6  Preview digest
-7  Resend digest
-8  Reset state
-h  Help
-0  Exit
-─────────────────────────────────────"""
 
-_HELP = """
-Option descriptions:
-  1  Daily check              Fetch new lausuntopalvelu proposals, score with Claude,
-                              and send email digest (flagged + borderline).
-  2  Daily check (dry run)    Same as above but print the digest instead of sending.
-  3  Update context           Re-fetch Kuluttajaliitto published statements used as
-                              scoring context. Run this before the first daily check
-                              and periodically to keep context current.
-  4  Review borderline        Print borderline items (score 4-5) from the last 7 days
-     (7 days)                 as a raw list for manual calibration review.
-  5  Review borderline        Same as above with a custom day range.
-     (custom)
-  6  Preview digest           Print the current digest (flagged items + borderline
-                              from the last 7 days) as plain text. No email sent.
-  7  Resend digest            Send the digest email (flagged + borderline from the
-                              last 7 days) without re-running scoring. Useful for
-                              testing email delivery or resending after a failure.
-  8  Reset state              Erase all state files (seen proposals, score log,
-                              flagged items) and start fresh.
-  h  Help                     Show this help.
-  0  Exit
-"""
+class _MenuItem(TypedDict):
+    key: str
+    label: str
+    description: list[str]
+    action: Callable[[], None] | None
+
+
+def _menu_items() -> list[_MenuItem]:
+    return [
+        {
+            "key": "1",
+            "label": "Daily check",
+            "description": [
+                "Fetch new lausuntopalvelu proposals, score with Claude,",
+                "and send email digest (flagged + borderline).",
+            ],
+            "action": lambda: _run_daily(dry_run=False),
+        },
+        {
+            "key": "2",
+            "label": "Daily check (dry run)",
+            "description": ["Same as above but print the digest instead of sending."],
+            "action": lambda: _run_daily(dry_run=True),
+        },
+        {
+            "key": "3",
+            "label": "Update Kuluttajaliitto context",
+            "description": [
+                "Re-fetch Kuluttajaliitto published statements used as",
+                "scoring context. Run this before the first daily check",
+                "and periodically to keep context current.",
+            ],
+            "action": cmd_update_context,
+        },
+        {
+            "key": "4",
+            "label": "Review borderline items (7 days)",
+            "description": [
+                "Print borderline items (score 4-5) from the last 7 days",
+                "as a raw list for manual calibration review.",
+            ],
+            "action": lambda: _run_review(days=7),
+        },
+        {
+            "key": "5",
+            "label": "Review borderline items (custom range)",
+            "description": ["Same as above with a custom day range."],
+            "action": _menu_review_custom,
+        },
+        {
+            "key": "6",
+            "label": "Preview digest",
+            "description": [
+                "Print the current digest (flagged items + borderline",
+                "from the last 7 days) as plain text. No email sent.",
+            ],
+            "action": _run_preview,
+        },
+        {
+            "key": "7",
+            "label": "Resend digest",
+            "description": [
+                "Send the digest email (flagged + borderline from the",
+                "last 7 days) without re-running scoring. Useful for",
+                "testing email delivery or resending after a failure.",
+            ],
+            "action": lambda: _run_resend(dry_run=False),
+        },
+        {
+            "key": "8",
+            "label": "Reset state",
+            "description": [
+                "Erase all state files (seen proposals, score log,",
+                "flagged items) and start fresh.",
+            ],
+            "action": cmd_reset_state,
+        },
+        {
+            "key": "h",
+            "label": "Help",
+            "description": ["Show this help."],
+            "action": None,
+        },
+        {
+            "key": "0",
+            "label": "Exit",
+            "description": ["Exit."],
+            "action": None,
+        },
+    ]
+
+
+def _format_menu(items: list[_MenuItem]) -> str:
+    lines = ["Lausuntobotti", "─────────────────────────────────────"]
+    for item in items:
+        lines.append(f"{item['key']}  {item['label']}")
+    lines.append("─────────────────────────────────────")
+    return "\n".join(lines)
+
+
+def _format_help(items: list[_MenuItem]) -> str:
+    lines = ["Option descriptions:"]
+    label_width = max(len(item["label"]) for item in items)
+    for item in items:
+        desc = item["description"]
+        first = desc[0] if desc else ""
+        prefix = f"  {item['key']}  "
+        lines.append(f"{prefix}{item['label']:<{label_width}}{first}")
+        indent = " " * (len(prefix) + label_width)
+        for extra in desc[1:]:
+            lines.append(f"{indent}{extra}")
+    return "\n".join(lines)
 
 
 def _menu_review_custom() -> None:
     raw = input("Days to look back: ").strip()
     try:
-        cmd_review_logged(days=int(raw))
+        _run_review(days=int(raw))
     except ValueError:
         print(f"Invalid number: {raw!r}")
 
 
 def cmd_interactive() -> None:
-    actions: dict[str, Callable[[], None]] = {
-        "1": lambda: cmd_daily(dry_run=False),
-        "2": lambda: cmd_daily(dry_run=True),
-        "3": cmd_update_context,
-        "4": lambda: cmd_review_logged(days=7),
-        "5": _menu_review_custom,
-        "6": cmd_preview_digest,
-        "7": lambda: cmd_resend_digest(dry_run=False),
-        "8": cmd_reset_state,
-    }
-    print(_MENU)
+    items = _menu_items()
+    actions = {item["key"]: item["action"] for item in items if item["action"] is not None}
+    menu_text = _format_menu(items)
+    help_text = _format_help(items)
+    print(menu_text)
     while True:
         try:
             choice = input("> ").strip()
@@ -502,14 +604,14 @@ def cmd_interactive() -> None:
         if choice == "0":
             break
         if choice == "h":
-            print(_HELP)
+            print(help_text)
             continue
         action = actions.get(choice)
         if action is None:
-            print(_HELP)
+            print(help_text)
             continue
         action()
-        print(_MENU)
+        print(menu_text)
 
 
 # ---------------------------------------------------------------------------
@@ -585,32 +687,7 @@ def main() -> None:
         cmd_interactive()
         return
 
-    if args.update_context:
-        cmd_update_context()
-
-    if args.daily:
-        cmd_daily(dry_run=args.dry_run)
-
-    if args.weekly:
-        cmd_weekly(dry_run=args.dry_run)
-
-    if args.midweek:
-        cmd_midweek(dry_run=args.dry_run)
-
-    if args.review_logged:
-        cmd_review_logged(days=args.days)
-
-    if args.preview_digest:
-        cmd_preview_digest(days=args.days)
-
-    if args.resend_digest:
-        cmd_resend_digest(dry_run=args.dry_run, days=args.days)
-
-    if args.reset_state:
-        cmd_reset_state()
-
-    if args.interactive:
-        cmd_interactive()
+    _dispatch_cli(args)
 
 
 if __name__ == "__main__":
