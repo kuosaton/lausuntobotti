@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from types import SimpleNamespace
 
 import resend
@@ -30,13 +30,15 @@ def test_send_email_uses_resend(monkeypatch) -> None:
 
 
 def test_build_daily_digest_contains_key_fields() -> None:
+    published = date.today() - timedelta(days=3)
+    deadline = date.today() + timedelta(days=17)
     flagged = [
         {
             "proposal": SimpleNamespace(
                 title="Asumista koskeva luonnos",
                 organization_name="Ympäristöministeriö",
-                published_on=datetime(2026, 4, 21),
-                deadline=datetime(2026, 5, 8),
+                published_on=datetime.combine(published, datetime.min.time()),
+                deadline=datetime.combine(deadline, datetime.min.time()),
                 url="https://example.invalid/proposal/1",
             ),
             "score": 8,
@@ -46,13 +48,15 @@ def test_build_daily_digest_contains_key_fields() -> None:
     ]
 
     subject, html_body, text_body = email_mod.build_daily_digest(flagged)
+    published_str = f"{published.day}.{published.month}.{published.year}"
+    deadline_str = f"{deadline.day}.{deadline.month}.{deadline.year}"
     assert "Uusia lausuntopyyntöjä" in subject
     assert "pistemäärä 8" in text_body  # score range in header
     assert "[8/10] Asumista koskeva luonnos" in text_body  # score on title line
     assert "Relevanssi" not in text_body  # no longer a separate field
-    assert "Julkaistu: 21.4.2026" in text_body
+    assert f"Julkaistu: {published_str}" in text_body
     assert "https://example.invalid/proposal/1" in text_body
-    assert "8.5.2026" in text_body
+    assert deadline_str in text_body
     assert "pv" in text_body
     assert "Teemat:    asuminen, kuluttajansuoja" in text_body
     assert "─" in text_body  # separator present
