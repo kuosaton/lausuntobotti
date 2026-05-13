@@ -39,10 +39,10 @@ All data comes from publicly accessible sources:
 
 Each item is scored by Claude based on Kuluttajaliitto's previously published statements and areas of focus. The default model is [Claude Haiku 4.5](https://www.anthropic.com/news/claude-haiku-4-5), and the scoring model/settings are configurable. The rubric is:
 
-- 8 to 10: Clearly within Kuluttajaliitto's core mandate such as consumer protection, product safety, financial services, or housing.
-- 5 to 7: Concerns consumers indirectly, or is adjacent to Kuluttajaliitto's priorities.
-- 2 to 4: Thin connection to consumer matters.
-- 0 to 1: No clear connection to consumers or Kuluttajaliitto's work.
+- **8 to 10**: Clearly within Kuluttajaliitto's core mandate such as consumer protection, product safety, financial services, or housing.
+- **5 to 7**: Concerns consumers indirectly, or is adjacent to Kuluttajaliitto's priorities.
+- **2 to 4**: Thin connection to consumer matters.
+- **0 to 1**: No clear connection to consumers or Kuluttajaliitto's work.
 
 The bot then acts on the score, printing a tag for each processed item:
 
@@ -56,8 +56,8 @@ The bot then acts on the score, printing a tag for each processed item:
 
 ### Prerequisites
 
-1. [uv](https://docs.astral.sh/uv/getting-started/installation/) (Python package and project manager)
-2. [Python 3.14](https://www.python.org/downloads/) (We recommend [using uv to install and manage Python versions](https://docs.astral.sh/uv/guides/install-python/).)
+1. [uv](https://docs.astral.sh/uv/getting-started/installation/)
+2. [Python 3.14](https://docs.astral.sh/uv/guides/install-python/)
 
 ### Setup
 
