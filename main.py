@@ -143,11 +143,18 @@ def _record_result(p: Proposal, result: dict, notified: bool, seen: dict) -> Non
     )
 
 
-def _deliver_digest(flagged: list[dict], dry_run: bool) -> None:
+def _deliver_digest(
+    flagged: list[dict], dry_run: bool, borderline: list[dict] | None = None
+) -> None:
+    borderline = borderline or []
     print(f"\n{len(flagged)} item(s) above threshold:")
     for item in sorted(flagged, key=lambda x: -x["score"]):
         print(f"  [{item['score']}/10] {item['proposal'].title}")
-    subject, html_body, text_body = build_daily_digest(flagged)
+    if borderline:
+        print(f"\n{len(borderline)} borderline item(s) (score 4-5):")
+        for item in sorted(borderline, key=lambda x: -x["score"]):
+            print(f"  [{item['score']}/10] {item['proposal'].title}")
+    subject, html_body, text_body = build_daily_digest(flagged, borderline)
     print(f"\nSubject: {subject}")
     print(text_body)
     if dry_run:
@@ -191,7 +198,7 @@ def cmd_daily(dry_run: bool) -> None:
         return
 
     flagged = []
-    total_logged = 0
+    borderline = []
 
     with httpx.Client() as client:
         for p in new_proposals:
@@ -239,18 +246,18 @@ def cmd_daily(dry_run: bool) -> None:
                     }
                 )
             elif score >= config.LOG_THRESHOLD:
-                total_logged += 1
                 print(f"  [LOG {score}/10] {p.title}")
+                borderline.append({"proposal": p, **result})
             else:
                 print(f"  [DROP {score}/10] {p.title}")
 
     _save_json(config.SEEN_PROPOSALS_PATH, seen)
 
-    if not flagged:
-        print(f"No items above notify threshold. Logged {total_logged} borderline items.")
+    if not flagged and not borderline:
+        print("No items above log threshold.")
         return
 
-    _deliver_digest(flagged, dry_run)
+    _deliver_digest(flagged, dry_run, borderline=borderline)
 
 
 def cmd_weekly(dry_run: bool) -> None:  # pylint: disable=unused-argument

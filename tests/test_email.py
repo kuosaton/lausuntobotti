@@ -150,6 +150,56 @@ def test_build_daily_digest_omits_url_line_when_empty() -> None:
     assert not any(line.strip() == "" and line.startswith("   ") for line in lines)
 
 
+def _digest_item(title: str, score: int) -> dict:
+    return {
+        "proposal": SimpleNamespace(
+            title=title,
+            organization_name="Org",
+            published_on=datetime(2026, 4, 1),
+            deadline=None,
+            url=f"https://example.invalid/{title}",
+        ),
+        "score": score,
+        "rationale": "R",
+        "themes": [],
+    }
+
+
+def test_build_daily_digest_renders_both_sections_in_order() -> None:
+    flagged = [_digest_item("Nostettava", 8)]
+    borderline = [_digest_item("Rajatapaus", 5)]
+
+    _, html_body, text_body = email_mod.build_daily_digest(flagged, borderline)
+
+    assert "Rajatapauksia" in text_body
+    assert text_body.index("Nostettava") < text_body.index("Rajatapauksia")
+    assert text_body.index("Rajatapauksia") < text_body.index("Rajatapaus")
+    assert "Rajatapauksia" in html_body
+    assert html_body.index("Nostettava") < html_body.index("Rajatapauksia")
+
+
+def test_build_daily_digest_borderline_only_still_renders() -> None:
+    borderline = [_digest_item("Vain rajatapaus", 4)]
+
+    subject, html_body, text_body = email_mod.build_daily_digest([], borderline)
+
+    assert "Uusia lausuntopyyntöjä" in subject
+    assert "Rajatapauksia" in text_body
+    assert "Vain rajatapaus" in text_body
+    assert "Uusia lausuntopyyntöjä" not in text_body  # flagged section header absent
+    assert "Vain rajatapaus" in html_body
+
+
+def test_build_daily_digest_flagged_only_omits_borderline_header() -> None:
+    flagged = [_digest_item("Vain nostettava", 8)]
+
+    _, html_body, text_body = email_mod.build_daily_digest(flagged)
+
+    assert "Vain nostettava" in text_body
+    assert "Rajatapauksia" not in text_body
+    assert "Rajatapauksia" not in html_body
+
+
 def test_build_weekly_digest_handles_empty_and_linked_items() -> None:
     committee_items = {
         "talousvaliokunta": [

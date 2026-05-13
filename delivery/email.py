@@ -69,51 +69,45 @@ def send_email(subject: str, html_body: str, text_body: str = "") -> None:
 # ---------------------------------------------------------------------------
 
 
-def build_daily_digest(flagged: list[dict]) -> tuple[str, str, str]:
-    today = _fmt_date(date.today())
-    sorted_items = sorted(
-        flagged,
+def _sort_items(items: list[dict]) -> list[dict]:
+    return sorted(
+        items,
         key=lambda x: (-x["score"], x["proposal"].deadline or datetime.max),
     )
-    count = len(sorted_items)
-    subject = f"Uusia lausuntopyyntöjä, {today}"
 
-    scores = [item["score"] for item in sorted_items]
-    score_range = (
-        f"pisteet {min(scores)}-{max(scores)}" if len(scores) > 1 else f"pistemäärä {scores[0]}"
-    )
-    lines = [
-        f"{count} uutta lausuntopyyntöä, jotka saattavat kiinnostaa Kuluttajaliittoa ({score_range}):\n"
+
+def _render_text_entry(item: dict, separator: str) -> list[str]:
+    p = item["proposal"]
+    published_str = _fmt_date(p.published_on) if getattr(p, "published_on", None) else "-"
+    deadline_str = _deadline_display(p.deadline)
+    themes = item.get("themes", [])
+    entry = [
+        separator,
+        f"▸ [{item['score']}/10] {p.title}",
+        f"   Pyytäjä:   {p.organization_name}",
+        f"   Julkaistu: {published_str}",
+        f"   Määräaika: {deadline_str}",
+        f"   {item['rationale']}",
     ]
-    separator = "─" * 60
-    for item in sorted_items:
-        p = item["proposal"]
-        published_str = _fmt_date(p.published_on) if getattr(p, "published_on", None) else "-"
-        deadline_str = _deadline_display(p.deadline)
-        themes = item.get("themes", [])
-        entry = [
-            separator,
-            f"▸ [{item['score']}/10] {p.title}",
-            f"   Pyytäjä:   {p.organization_name}",
-            f"   Julkaistu: {published_str}",
-            f"   Määräaika: {deadline_str}",
-            f"   {item['rationale']}",
-        ]
-        if themes:
-            entry.append(f"   Teemat:    {', '.join(themes)}")
-        if p.url:
-            entry.append(f"   {p.url}")
-        entry.append("")
-        lines += entry
-    text_body = "\n".join(lines)
+    if themes:
+        entry.append(f"   Teemat:    {', '.join(themes)}")
+    if p.url:
+        entry.append(f"   {p.url}")
+    entry.append("")
+    return entry
 
-    item_html = ""
-    for item in sorted_items:
-        p = item["proposal"]
-        published_str = _fmt_date(p.published_on) if getattr(p, "published_on", None) else "-"
-        deadline_str = _deadline_html(p.deadline)
-        themes = ", ".join(item.get("themes", []))
-        item_html += f"""
+
+def _render_html_entry(item: dict) -> str:
+    p = item["proposal"]
+    published_str = _fmt_date(p.published_on) if getattr(p, "published_on", None) else "-"
+    deadline_str = _deadline_html(p.deadline)
+    themes = ", ".join(item.get("themes", []))
+    themes_html = (
+        f'<p style="margin:4px 0 0;font-size:12px;color:#888;">Teemat: {themes}</p>'
+        if themes
+        else ""
+    )
+    return f"""
         <div style="margin-bottom:24px;padding:16px;border-left:4px solid #1a56a0;background:#f8f9fa;">
           <p style="margin:0 0 6px;font-size:15px;font-weight:bold;">
             <a href="{p.url}" style="color:#1a56a0;text-decoration:none;">{p.title}</a>
@@ -125,16 +119,64 @@ def build_daily_digest(flagged: list[dict]) -> tuple[str, str, str]:
             <tr><td style="padding:2px 12px 2px 0;white-space:nowrap;">Relevanssi</td><td>{item["score"]}/10</td></tr>
           </table>
           <p style="margin:8px 0 0;font-size:13px;color:#333;">{item["rationale"]}</p>
-          {f'<p style="margin:4px 0 0;font-size:12px;color:#888;">Teemat: {themes}</p>' if themes else ""}
+          {themes_html}
         </div>"""
+
+
+def build_daily_digest(
+    flagged: list[dict], borderline: list[dict] | None = None
+) -> tuple[str, str, str]:
+    today = _fmt_date(date.today())
+    flagged_sorted = _sort_items(flagged)
+    borderline_sorted = _sort_items(borderline or [])
+    subject = f"Uusia lausuntopyyntöjä, {today}"
+    separator = "─" * 60
+
+    lines: list[str] = []
+    if flagged_sorted:
+        scores = [item["score"] for item in flagged_sorted]
+        score_range = (
+            f"pisteet {min(scores)}-{max(scores)}" if len(scores) > 1 else f"pistemäärä {scores[0]}"
+        )
+        lines.append(
+            f"{len(flagged_sorted)} uutta lausuntopyyntöä, jotka saattavat kiinnostaa "
+            f"Kuluttajaliittoa ({score_range}):\n"
+        )
+        for item in flagged_sorted:
+            lines += _render_text_entry(item, separator)
+
+    if borderline_sorted:
+        if flagged_sorted:
+            lines.append("")
+        lines.append(f"Rajatapauksia ({len(borderline_sorted)} kpl, pistemäärä 4-5):\n")
+        for item in borderline_sorted:
+            lines += _render_text_entry(item, separator)
+    text_body = "\n".join(lines)
+
+    flagged_html = "".join(_render_html_entry(item) for item in flagged_sorted)
+    borderline_html = "".join(_render_html_entry(item) for item in borderline_sorted)
+
+    flagged_section_html = (
+        f"""
+  <h2 style="color:#1a56a0;margin-bottom:4px;">Uusia lausuntopyyntöjä</h2>
+  <p style="color:#666;margin-top:0;">{today} &ndash; {len(flagged_sorted)} uutta ehdotusta</p>
+  {flagged_html}"""
+        if flagged_sorted
+        else ""
+    )
+    borderline_section_html = (
+        f"""
+  <h2 style="color:#1a56a0;margin-bottom:4px;margin-top:32px;">Rajatapauksia</h2>
+  <p style="color:#666;margin-top:0;">Pistemäärä 4-5 &ndash; {len(borderline_sorted)} kpl</p>
+  {borderline_html}"""
+        if borderline_sorted
+        else ""
+    )
 
     html_body = f"""<!DOCTYPE html>
 <html lang="fi">
 <head><meta charset="utf-8"><title>{subject}</title></head>
-<body style="font-family:Arial,sans-serif;max-width:680px;margin:0 auto;padding:24px;color:#222;">
-  <h2 style="color:#1a56a0;margin-bottom:4px;">Uusia lausuntopyyntöjä</h2>
-  <p style="color:#666;margin-top:0;">{today} &ndash; {count} uutta ehdotusta</p>
-  {item_html}
+<body style="font-family:Arial,sans-serif;max-width:680px;margin:0 auto;padding:24px;color:#222;">{flagged_section_html}{borderline_section_html}
   <hr style="border:none;border-top:1px solid #ddd;margin:32px 0 16px;">
   <p style="font-size:11px;color:#aaa;">
     Lausuntobotti &middot; <a href="https://github.com/kuosaton/lausuntobotti" target="_blank" style="color:#aaa;">GitHub</a>
