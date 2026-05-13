@@ -332,6 +332,9 @@ def _load_flagged() -> list[dict]:
                 published_on = datetime.fromisoformat(e["published_on"])
             except ValueError:
                 pass
+        today = datetime.now(UTC).date()
+        if deadline is not None and deadline.date() < today:
+            continue
         proposal = SimpleNamespace(
             title=e.get("title", ""),
             organization_name=e.get("organization") or "-",

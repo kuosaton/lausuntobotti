@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from types import SimpleNamespace
 
 import config
@@ -628,3 +628,50 @@ def test_cmd_preview_flagged_missing_deadline_still_builds(
     main.cmd_preview_flagged()
     # Missing deadline field surfaces as proposal.deadline = None
     assert captured[0]["proposal"].deadline is None
+
+
+def test_load_flagged_excludes_expired_items(state_paths) -> None:
+    today = date.today()
+    yesterday = (today - timedelta(days=1)).isoformat()
+    tomorrow = (today + timedelta(days=1)).isoformat()
+
+    state_paths.flagged.write_text(
+        json.dumps(
+            [
+                {
+                    "title": "Vanhentunut",
+                    "organization": "Org",
+                    "deadline": yesterday,
+                    "url": "https://example.invalid/expired",
+                    "score": 7,
+                    "rationale": "R",
+                    "themes": [],
+                },
+                {
+                    "title": "Voimassa",
+                    "organization": "Org",
+                    "deadline": tomorrow,
+                    "url": "https://example.invalid/open",
+                    "score": 7,
+                    "rationale": "R",
+                    "themes": [],
+                },
+                {
+                    "title": "Ei deadlinea",
+                    "organization": "Org",
+                    "url": "https://example.invalid/no-deadline",
+                    "score": 7,
+                    "rationale": "R",
+                    "themes": [],
+                },
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    result = main._load_flagged()
+    titles = [item["proposal"].title for item in result]
+
+    assert "Vanhentunut" not in titles
+    assert "Voimassa" in titles
+    assert "Ei deadlinea" in titles

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 import main
 from clients.lausuntopalvelu import Proposal
@@ -88,7 +88,7 @@ def test_cmd_preview_flagged_valid_deadline_branch(state_paths, monkeypatch) -> 
                     "title": "Aihe",
                     "organization": "Org",
                     "published_on": "2026-04-19T09:30:00",
-                    "deadline": "2026-05-12",
+                    "deadline": (date.today() + timedelta(days=30)).isoformat(),
                     "url": "https://example.invalid/p/2",
                     "score": 7,
                     "rationale": "R",
