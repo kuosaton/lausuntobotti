@@ -13,54 +13,18 @@ from datetime import date, datetime, timedelta
 
 import resend
 
-import config
 import main
 from clients.lausuntopalvelu import Proposal
 
 
-def _setup_state_paths(tmp_path, monkeypatch) -> tuple:
-    state_dir = tmp_path / "state"
-    context_dir = tmp_path / "context"
-    state_dir.mkdir()
-    context_dir.mkdir()
-
-    seen_path = state_dir / "seen_proposals.json"
-    score_log_path = state_dir / "score_log.jsonl"
-    flagged_path = state_dir / "nostetut.json"
-    context_path = context_dir / "kuluttajaliitto.json"
-
-    seen_path.write_text("{}", encoding="utf-8")
-    score_log_path.write_text("", encoding="utf-8")
-    flagged_path.write_text("[]", encoding="utf-8")
-    context_path.write_text(
-        json.dumps(
-            {
-                "last_updated": None,
-                "recent_statements": [{"date": "2026-04-01", "title": "Aiempi lausunto"}],
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    monkeypatch.setattr(config, "SEEN_PROPOSALS_PATH", seen_path)
-    monkeypatch.setattr(config, "SCORE_LOG_PATH", score_log_path)
-    monkeypatch.setattr(config, "FLAGGED_PATH", flagged_path)
-    monkeypatch.setattr(config, "CONTEXT_PATH", context_path)
-    monkeypatch.setattr(config, "NOTIFY_THRESHOLD", 7)
-    monkeypatch.setattr(config, "LOG_THRESHOLD", 4)
-    monkeypatch.setattr(config, "LAUSUNTOPALVELU_FETCH_TOP", 5)
-
-    return seen_path, score_log_path, flagged_path, context_path
-
-
-def test_cmd_daily_full_pipeline_renders_real_digest(tmp_path, monkeypatch) -> None:
+def test_cmd_daily_full_pipeline_renders_real_digest(state_paths, monkeypatch) -> None:
     """Exercise fetch → score → render → send with real digest building.
 
     Only stubs HTTP, LLM, Resend, and the prompts. Asserts that the email
     actually sent by Resend contains the proposal data — title, score,
     organization, URL, both rationale and themes.
     """
-    _setup_state_paths(tmp_path, monkeypatch)
+    del state_paths  # fixture pins config paths; we don't read any back
 
     monkeypatch.setenv("SENDER_EMAIL", "botti@example.com")
     monkeypatch.setenv("RECIPIENT_EMAIL", "vastaanottaja@example.com")
@@ -172,13 +136,12 @@ def test_cmd_daily_full_pipeline_renders_real_digest(tmp_path, monkeypatch) -> N
     assert "drop-e2e" not in text
 
 
-def test_cmd_daily_persists_flagged_with_complete_shape(tmp_path, monkeypatch) -> None:
+def test_cmd_daily_persists_flagged_with_complete_shape(state_paths, monkeypatch) -> None:
     """End-to-end: cmd_daily writes the full flagged record to nostetut.json.
 
     This is the contract used by cmd_send_flagged / cmd_preview_flagged when they
     re-read flagged items off disk, so every field must round-trip.
     """
-    _, _, flagged_path, _ = _setup_state_paths(tmp_path, monkeypatch)
 
     deadline = datetime.now(main.UTC) + timedelta(days=10)
     published = datetime.now(main.UTC) - timedelta(days=1)
@@ -210,7 +173,7 @@ def test_cmd_daily_persists_flagged_with_complete_shape(tmp_path, monkeypatch) -
 
     main.cmd_daily(dry_run=False)
 
-    flagged_records = json.loads(flagged_path.read_text(encoding="utf-8"))
+    flagged_records = json.loads(state_paths.flagged.read_text(encoding="utf-8"))
     assert len(flagged_records) == 1
     record = flagged_records[0]
 

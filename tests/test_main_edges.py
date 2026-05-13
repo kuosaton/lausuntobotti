@@ -3,68 +3,28 @@ from __future__ import annotations
 import json
 from datetime import datetime, timedelta
 
-import config
 import main
 from clients.lausuntopalvelu import Proposal
 
 
-def _setup_state_paths(tmp_path, monkeypatch) -> tuple:
-    state_dir = tmp_path / "state"
-    context_dir = tmp_path / "context"
-    state_dir.mkdir()
-    context_dir.mkdir()
-
-    seen_path = state_dir / "seen_proposals.json"
-    score_log_path = state_dir / "score_log.jsonl"
-    flagged_path = state_dir / "nostetut.json"
-    context_path = context_dir / "kuluttajaliitto.json"
-
-    seen_path.write_text("{}", encoding="utf-8")
-    score_log_path.write_text("", encoding="utf-8")
-    flagged_path.write_text("[]", encoding="utf-8")
-    context_path.write_text(
-        json.dumps({"last_updated": None, "recent_statements": []}),
-        encoding="utf-8",
-    )
-
-    monkeypatch.setattr(config, "SEEN_PROPOSALS_PATH", seen_path)
-    monkeypatch.setattr(config, "SCORE_LOG_PATH", score_log_path)
-    monkeypatch.setattr(config, "FLAGGED_PATH", flagged_path)
-    monkeypatch.setattr(config, "CONTEXT_PATH", context_path)
-    monkeypatch.setattr(config, "NOTIFY_THRESHOLD", 7)
-    monkeypatch.setattr(config, "LOG_THRESHOLD", 4)
-    monkeypatch.setattr(config, "LAUSUNTOPALVELU_FETCH_TOP", 5)
-
-    return seen_path, score_log_path, flagged_path, context_path
-
-
-def test_load_context_defaults_when_missing(tmp_path, monkeypatch) -> None:
-    _seen_path, _score_log_path, _flagged_path, context_path = _setup_state_paths(
-        tmp_path, monkeypatch
-    )
-    context_path.unlink()
+def test_load_context_defaults_when_missing(state_paths) -> None:
+    state_paths.context.unlink()
 
     ctx = main._load_context()
     assert ctx == {"last_updated": None, "recent_statements": []}
 
 
-def test_save_context_writes_json(tmp_path, monkeypatch) -> None:
-    _seen_path, _score_log_path, _flagged_path, context_path = _setup_state_paths(
-        tmp_path, monkeypatch
-    )
+def test_save_context_writes_json(state_paths) -> None:
     payload = {"last_updated": "2026-04-22", "recent_statements": [{"title": "A"}]}
 
     main._save_context(payload)
-    stored = json.loads(context_path.read_text(encoding="utf-8"))
+    stored = json.loads(state_paths.context.read_text(encoding="utf-8"))
     assert stored == payload
 
 
 def test_cmd_daily_warns_if_distribution_lookup_fails_and_drops_low_score(
-    tmp_path, monkeypatch, capsys
+    state_paths, monkeypatch, capsys
 ) -> None:
-    _seen_path, score_log_path, _flagged_path, _context_path = _setup_state_paths(
-        tmp_path, monkeypatch
-    )
     proposal = Proposal(
         id="drop-1",
         title="Putoaa",
@@ -91,15 +51,12 @@ def test_cmd_daily_warns_if_distribution_lookup_fails_and_drops_low_score(
     captured = capsys.readouterr()
     assert "[WARN] could not read participation info" in captured.err
     assert "[DROP 2/10]" in captured.out
-    assert score_log_path.read_text(encoding="utf-8").strip() != ""
+    assert state_paths.score_log.read_text(encoding="utf-8").strip() != ""
 
 
-def test_cmd_review_logged_skips_blank_and_invalid_json(tmp_path, monkeypatch, capsys) -> None:
-    _seen_path, score_log_path, _flagged_path, _context_path = _setup_state_paths(
-        tmp_path, monkeypatch
-    )
+def test_cmd_review_logged_skips_blank_and_invalid_json(state_paths, capsys) -> None:
     now = datetime.now(main.UTC).isoformat()
-    score_log_path.write_text(
+    state_paths.score_log.write_text(
         "\n".join(
             [
                 "",
@@ -115,22 +72,16 @@ def test_cmd_review_logged_skips_blank_and_invalid_json(tmp_path, monkeypatch, c
     assert "No borderline items" in out
 
 
-def test_cmd_preview_flagged_empty_list_branch(tmp_path, monkeypatch, capsys) -> None:
-    _seen_path, _score_log_path, flagged_path, _context_path = _setup_state_paths(
-        tmp_path, monkeypatch
-    )
-    flagged_path.write_text("[ ]", encoding="utf-8")
+def test_cmd_preview_flagged_empty_list_branch(state_paths, capsys) -> None:
+    state_paths.flagged.write_text("[ ]", encoding="utf-8")
 
     main.cmd_preview_flagged()
     out = capsys.readouterr().out
     assert "no flagged items" in out.lower()
 
 
-def test_cmd_preview_flagged_valid_deadline_branch(tmp_path, monkeypatch, capsys) -> None:
-    _seen_path, _score_log_path, flagged_path, _context_path = _setup_state_paths(
-        tmp_path, monkeypatch
-    )
-    flagged_path.write_text(
+def test_cmd_preview_flagged_valid_deadline_branch(state_paths, monkeypatch) -> None:
+    state_paths.flagged.write_text(
         json.dumps(
             [
                 {

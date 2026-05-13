@@ -1,53 +1,18 @@
 from __future__ import annotations
 
-import json
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 
 import resend
 
-import config
 import delivery.email as email_mod
 import main
 from clients.lausuntopalvelu import Proposal
 from processing import llm_scorer
 
 
-def _setup_state_paths(tmp_path, monkeypatch) -> tuple:
-    state_dir = tmp_path / "state"
-    context_dir = tmp_path / "context"
-    state_dir.mkdir()
-    context_dir.mkdir()
-
-    seen_path = state_dir / "seen_proposals.json"
-    score_log_path = state_dir / "score_log.jsonl"
-    flagged_path = state_dir / "nostetut.json"
-    context_path = context_dir / "kuluttajaliitto.json"
-
-    seen_path.write_text("{}", encoding="utf-8")
-    score_log_path.write_text("", encoding="utf-8")
-    flagged_path.write_text("[]", encoding="utf-8")
-    context_path.write_text(
-        json.dumps({"last_updated": None, "recent_statements": []}),
-        encoding="utf-8",
-    )
-
-    monkeypatch.setattr(config, "SEEN_PROPOSALS_PATH", seen_path)
-    monkeypatch.setattr(config, "SCORE_LOG_PATH", score_log_path)
-    monkeypatch.setattr(config, "FLAGGED_PATH", flagged_path)
-    monkeypatch.setattr(config, "CONTEXT_PATH", context_path)
-    monkeypatch.setattr(config, "NOTIFY_THRESHOLD", 7)
-    monkeypatch.setattr(config, "LOG_THRESHOLD", 4)
-    monkeypatch.setattr(config, "LAUSUNTOPALVELU_FETCH_TOP", 5)
-
-    return seen_path, score_log_path, flagged_path, context_path
-
-
-def test_cmd_daily_uses_open_client_for_recipient_lookup(tmp_path, monkeypatch) -> None:
-    _seen_path, _score_log_path, _flagged_path, _context_path = _setup_state_paths(
-        tmp_path, monkeypatch
-    )
-
+def test_cmd_daily_uses_open_client_for_recipient_lookup(state_paths, monkeypatch) -> None:
+    del state_paths  # fixture pins config paths; we don't read any back
     proposal = Proposal(
         id="client-open-check",
         title="Client open check",
