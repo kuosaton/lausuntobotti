@@ -357,32 +357,12 @@ def _load_flagged() -> list[dict]:
     return flagged
 
 
-def cmd_preview_flagged() -> None:
-    flagged = _load_flagged()
-    if not flagged:
-        print("No flagged items to preview.")
-        return
-    subject, _html_body, text_body = build_daily_digest(flagged)
-    print(f"Subject: {subject}\n")
-    print(text_body)
-
-
-def cmd_send_flagged(dry_run: bool) -> None:
-    flagged = _load_flagged()
-    if not flagged:
-        print("No flagged items to send.")
-        return
-    _deliver_digest(flagged, dry_run)
-
-
-def cmd_preview_logged(days: int = 7) -> None:
+def _load_borderline(days: int = 7) -> list[dict]:
+    """Return borderline items from the score log within the last `days` days."""
     if not config.SCORE_LOG_PATH.exists():
-        print("No score log found.")
-        return
-
+        return []
     cutoff = datetime.now(UTC).timestamp() - days * 86400
-    borderline = []
-
+    items = []
     with config.SCORE_LOG_PATH.open(encoding="utf-8") as f:
         for line in f:
             stripped = line.strip()
@@ -397,46 +377,57 @@ def cmd_preview_logged(days: int = 7) -> None:
             if ts.timestamp() < cutoff:
                 continue
             if config.LOG_THRESHOLD <= score < config.NOTIFY_THRESHOLD:
-                borderline.append(entry)
+                published_on = None
+                if entry.get("published_on"):
+                    try:
+                        published_on = datetime.fromisoformat(entry["published_on"])
+                    except ValueError:
+                        pass
+                deadline = None
+                if entry.get("deadline"):
+                    try:
+                        d = date_type.fromisoformat(entry["deadline"])
+                        deadline = datetime(d.year, d.month, d.day)
+                    except ValueError:
+                        pass
+                proposal = SimpleNamespace(
+                    title=entry.get("title", ""),
+                    organization_name=entry.get("organization") or "-",
+                    deadline=deadline,
+                    published_on=published_on,
+                    url=entry.get("url", ""),
+                )
+                items.append(
+                    {
+                        "proposal": proposal,
+                        "score": score,
+                        "rationale": entry.get("rationale", ""),
+                        "themes": entry.get("themes", []),
+                    }
+                )
+    return items
 
-    if not borderline:
-        print(f"No borderline items in the last {days} days.")
+
+def cmd_preview_digest(days: int = 7) -> None:
+    """Print the current digest (flagged + recent borderline) as plain text."""
+    flagged = _load_flagged()
+    borderline = _load_borderline(days=days)
+    if not flagged and not borderline:
+        print("Nothing to preview: no flagged items and no borderline items in the score log.")
         return
-
-    items = []
-    for e in borderline:
-        published_on = None
-        if e.get("published_on"):
-            try:
-                published_on = datetime.fromisoformat(e["published_on"])
-            except ValueError:
-                pass
-        deadline = None
-        if e.get("deadline"):
-            try:
-                d = date_type.fromisoformat(e["deadline"])
-                deadline = datetime(d.year, d.month, d.day)
-            except ValueError:
-                pass
-        proposal = SimpleNamespace(
-            title=e.get("title", ""),
-            organization_name=e.get("organization") or "-",
-            deadline=deadline,
-            published_on=published_on,
-            url=e.get("url", ""),
-        )
-        items.append(
-            {
-                "proposal": proposal,
-                "score": e.get("score", 0),
-                "rationale": e.get("rationale", ""),
-                "themes": e.get("themes", []),
-            }
-        )
-
-    subject, _html_body, text_body = build_daily_digest(items)
+    subject, _html_body, text_body = build_daily_digest(flagged, borderline)
     print(f"Subject: {subject}\n")
     print(text_body)
+
+
+def cmd_resend_digest(dry_run: bool, days: int = 7) -> None:
+    """Resend the digest (flagged + recent borderline) without re-running scoring."""
+    flagged = _load_flagged()
+    borderline = _load_borderline(days=days)
+    if not flagged and not borderline:
+        print("Nothing to send: no flagged items and no borderline items in the score log.")
+        return
+    _deliver_digest(flagged, dry_run, borderline=borderline)
 
 
 def cmd_reset_state() -> None:
@@ -462,12 +453,11 @@ Lausuntobotti
 1  Daily check
 2  Daily check (dry run)
 3  Update Kuluttajaliitto context
-4  Review logged items (7 days)
-5  Review logged items (custom range)
-6  Preview flagged
-7  Preview logged (borderline)
-8  Send flagged (resend last digest)
-9  Reset state
+4  Review borderline items (7 days)
+5  Review borderline items (custom range)
+6  Preview digest
+7  Resend digest
+8  Reset state
 h  Help
 0  Exit
 ─────────────────────────────────────"""
@@ -475,19 +465,21 @@ h  Help
 _HELP = """
 Option descriptions:
   1  Daily check              Fetch new lausuntopalvelu proposals, score with Claude,
-                              and send email for items above threshold.
+                              and send email digest (flagged + borderline).
   2  Daily check (dry run)    Same as above but print the digest instead of sending.
   3  Update context           Re-fetch Kuluttajaliitto published statements used as
                               scoring context. Run this before the first daily check
                               and periodically to keep context current.
-  4  Review logged (7 days)   Print borderline items (score 4-6) from the last 7 days
-                              for manual calibration review.
-  5  Review logged (custom)   Same as above with a custom day range.
-  6  Preview flagged          Print the last flagged digest as plain text (no email).
-  7  Preview logged           Print borderline items as a formatted digest (no email).
-  8  Send flagged             Resend the last daily digest email without re-running
-                              scoring. Useful for testing email delivery.
-  9  Reset state              Erase all state files (seen proposals, score log,
+  4  Review borderline        Print borderline items (score 4-5) from the last 7 days
+     (7 days)                 as a raw list for manual calibration review.
+  5  Review borderline        Same as above with a custom day range.
+     (custom)
+  6  Preview digest           Print the current digest (flagged items + borderline
+                              from the last 7 days) as plain text. No email sent.
+  7  Resend digest            Send the digest email (flagged + borderline from the
+                              last 7 days) without re-running scoring. Useful for
+                              testing email delivery or resending after a failure.
+  8  Reset state              Erase all state files (seen proposals, score log,
                               flagged items) and start fresh.
   h  Help                     Show this help.
   0  Exit
@@ -502,14 +494,6 @@ def _menu_review_custom() -> None:
         print(f"Invalid number: {raw!r}")
 
 
-def _menu_preview_logged() -> None:
-    raw = input("Days to look back (default 7): ").strip()
-    try:
-        cmd_preview_logged(days=int(raw) if raw else 7)
-    except ValueError:
-        print(f"Invalid number: {raw!r}")
-
-
 def cmd_interactive() -> None:
     actions: dict[str, Callable[[], None]] = {
         "1": lambda: cmd_daily(dry_run=False),
@@ -517,10 +501,9 @@ def cmd_interactive() -> None:
         "3": cmd_update_context,
         "4": lambda: cmd_review_logged(days=7),
         "5": _menu_review_custom,
-        "6": cmd_preview_flagged,
-        "7": _menu_preview_logged,
-        "8": lambda: cmd_send_flagged(dry_run=False),
-        "9": cmd_reset_state,
+        "6": cmd_preview_digest,
+        "7": lambda: cmd_resend_digest(dry_run=False),
+        "8": cmd_reset_state,
     }
     print(_MENU)
     while True:
@@ -570,28 +553,23 @@ def main() -> None:
     parser.add_argument(
         "--review-logged",
         action="store_true",
-        help="Print borderline (score 4-5) items from the last 7 days",
+        help="Print borderline (score 4-5) items as a raw list for calibration review",
     )
     parser.add_argument(
         "--days",
         type=int,
         default=7,
-        help="Number of days to look back for --review-logged (default: 7)",
+        help="Days to look back for --review-logged and --preview-digest / --resend-digest (default: 7)",
     )
     parser.add_argument(
-        "--preview-flagged",
+        "--preview-digest",
         action="store_true",
-        help="Preview flagged items as an email digest",
+        help="Print current digest (flagged + recent borderline) as plain text, no email",
     )
     parser.add_argument(
-        "--send-flagged",
+        "--resend-digest",
         action="store_true",
-        help="Resend the last daily digest without re-running scoring",
-    )
-    parser.add_argument(
-        "--preview-logged",
-        action="store_true",
-        help="Preview borderline items from the score log as a formatted digest",
+        help="Send digest email (flagged + recent borderline) without re-running scoring",
     )
     parser.add_argument(
         "--reset-state",
@@ -612,9 +590,8 @@ def main() -> None:
             args.midweek,
             args.update_context,
             args.review_logged,
-            args.preview_flagged,
-            args.send_flagged,
-            args.preview_logged,
+            args.preview_digest,
+            args.resend_digest,
             args.reset_state,
             args.interactive,
         ]
@@ -637,14 +614,11 @@ def main() -> None:
     if args.review_logged:
         cmd_review_logged(days=args.days)
 
-    if args.preview_flagged:
-        cmd_preview_flagged()
+    if args.preview_digest:
+        cmd_preview_digest(days=args.days)
 
-    if args.send_flagged:
-        cmd_send_flagged(dry_run=args.dry_run)
-
-    if args.preview_logged:
-        cmd_preview_logged(days=args.days)
+    if args.resend_digest:
+        cmd_resend_digest(dry_run=args.dry_run, days=args.days)
 
     if args.reset_state:
         cmd_reset_state()

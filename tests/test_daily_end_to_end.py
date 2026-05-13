@@ -139,7 +139,7 @@ def test_cmd_daily_full_pipeline_renders_real_digest(state_paths, monkeypatch) -
 def test_cmd_daily_persists_flagged_with_complete_shape(state_paths, monkeypatch) -> None:
     """End-to-end: cmd_daily writes the full flagged record to nostetut.json.
 
-    This is the contract used by cmd_send_flagged / cmd_preview_flagged when they
+    This is the contract used by cmd_resend_digest / cmd_preview_digest when they
     re-read flagged items off disk, so every field must round-trip.
     """
 
@@ -177,7 +177,7 @@ def test_cmd_daily_persists_flagged_with_complete_shape(state_paths, monkeypatch
     assert len(flagged_records) == 1
     record = flagged_records[0]
 
-    # Every field cmd_send_flagged / cmd_preview_flagged relies on must be present
+    # Every field cmd_resend_digest / cmd_preview_digest relies on must be present
     expected_keys = {
         "timestamp",
         "source",

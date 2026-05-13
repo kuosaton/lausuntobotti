@@ -72,15 +72,16 @@ def test_cmd_review_logged_skips_blank_and_invalid_json(state_paths, capsys) -> 
     assert "No borderline items" in out
 
 
-def test_cmd_preview_flagged_empty_list_branch(state_paths, capsys) -> None:
+def test_cmd_preview_digest_empty(state_paths, capsys) -> None:
     state_paths.flagged.write_text("[ ]", encoding="utf-8")
+    # score log is empty from fixture — no borderline either
 
-    main.cmd_preview_flagged()
+    main.cmd_preview_digest()
     out = capsys.readouterr().out
-    assert "no flagged items" in out.lower()
+    assert "nothing to preview" in out.lower()
 
 
-def test_cmd_preview_flagged_valid_deadline_branch(state_paths, monkeypatch) -> None:
+def test_cmd_preview_digest_valid_deadline_parsed(state_paths, monkeypatch) -> None:
     state_paths.flagged.write_text(
         json.dumps(
             [
@@ -105,7 +106,7 @@ def test_cmd_preview_flagged_valid_deadline_branch(state_paths, monkeypatch) -> 
         "build_daily_digest",
         lambda flagged, borderline=None: captured.extend(flagged) or ("S", "H", "T"),
     )
-    main.cmd_preview_flagged()
+    main.cmd_preview_digest()
     # Valid ISO date strings are parsed into datetime objects
     assert captured[0]["proposal"].deadline is not None
     assert captured[0]["proposal"].published_on is not None

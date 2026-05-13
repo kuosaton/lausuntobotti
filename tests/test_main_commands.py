@@ -414,32 +414,16 @@ def test_cmd_review_logged_prints_borderline_section(state_paths, monkeypatch, c
     assert "Rajalla" in out
 
 
-def test_cmd_preview_logged_no_log_file(state_paths, monkeypatch, capsys) -> None:
-
-    state_paths.score_log.unlink()
-
-    main.cmd_preview_logged(days=7)
+def test_cmd_preview_digest_no_content(state_paths, capsys) -> None:
+    # Both stores empty (fixture default)
+    main.cmd_preview_digest()
     out = capsys.readouterr().out
-    assert "No score log found." in out
+    assert "nothing to preview" in out.lower()
 
 
-def test_cmd_preview_logged_empty_result(state_paths, monkeypatch, capsys) -> None:
-
-    now = datetime.now(main.UTC).isoformat()
-    # Only items above NOTIFY_THRESHOLD — none in borderline range
-    state_paths.score_log.write_text(
-        json.dumps({"timestamp": now, "title": "Nostettava", "score": 8, "rationale": "R"}) + "\n",
-        encoding="utf-8",
-    )
-
-    main.cmd_preview_logged(days=7)
-    out = capsys.readouterr().out
-    assert "No borderline items" in out
-
-
-def test_cmd_preview_logged_renders_borderline_items(state_paths, monkeypatch, capsys) -> None:
-
+def test_cmd_preview_digest_renders_borderline_from_log(state_paths, capsys) -> None:
     now = datetime.now(main.UTC)
+    deadline = (date.today() + timedelta(days=14)).isoformat()
     entries = [
         {
             "timestamp": now.isoformat(),
@@ -449,7 +433,7 @@ def test_cmd_preview_logged_renders_borderline_items(state_paths, monkeypatch, c
             "themes": ["kuluttaja"],
             "published_on": now.isoformat(),
             "organization": "Testivirasto",
-            "deadline": "2026-05-01",
+            "deadline": deadline,
             "url": "https://example.invalid/p/1",
         },
         {
@@ -458,7 +442,6 @@ def test_cmd_preview_logged_renders_borderline_items(state_paths, monkeypatch, c
             "score": 4,
             "rationale": "Vanhentunut",
             "themes": [],
-            "published_on": now.isoformat(),
         },
     ]
     state_paths.score_log.write_text(
@@ -466,20 +449,16 @@ def test_cmd_preview_logged_renders_borderline_items(state_paths, monkeypatch, c
         encoding="utf-8",
     )
 
-    main.cmd_preview_logged(days=7)
+    main.cmd_preview_digest(days=7)
     out = capsys.readouterr().out
-    # Real digest renders the recent borderline item with its details
+    assert "Rajatapauksia" in out  # borderline section header
     assert "Rajatapaus" in out
     assert "Testivirasto" in out
     assert "https://example.invalid/p/1" in out
-    # Old item (>7 days) is excluded
-    assert "Vanha rajatapaus" not in out
+    assert "Vanha rajatapaus" not in out  # outside 7-day window
 
 
-def test_cmd_preview_logged_filters_above_notify_threshold(
-    state_paths, monkeypatch, capsys
-) -> None:
-
+def test_cmd_preview_digest_filters_score_thresholds(state_paths, capsys) -> None:
     now = datetime.now(main.UTC).isoformat()
     entries = [
         {"timestamp": now, "title": "Nostettu", "score": 7, "rationale": "R", "themes": []},
@@ -491,17 +470,14 @@ def test_cmd_preview_logged_filters_above_notify_threshold(
         encoding="utf-8",
     )
 
-    main.cmd_preview_logged(days=7)
+    main.cmd_preview_digest(days=7)
     out = capsys.readouterr().out
-    # Only the borderline item (score 5) reaches the digest; flagged (7) and
-    # below-LOG_THRESHOLD (2) are filtered out
     assert "Rajalla" in out
     assert "Nostettu" not in out
     assert "Liian alhainen" not in out
 
 
-def test_cmd_preview_logged_invalid_dates_still_builds(state_paths, monkeypatch, capsys) -> None:
-
+def test_load_borderline_invalid_dates_normalize_to_none(state_paths) -> None:
     now = datetime.now(main.UTC).isoformat()
     entry = {
         "timestamp": now,
@@ -514,23 +490,13 @@ def test_cmd_preview_logged_invalid_dates_still_builds(state_paths, monkeypatch,
     }
     state_paths.score_log.write_text(json.dumps(entry) + "\n", encoding="utf-8")
 
-    captured_items: list = []
-    monkeypatch.setattr(
-        main,
-        "build_daily_digest",
-        lambda items: captured_items.extend(items) or ("S", "H", "T"),
-    )
-
-    main.cmd_preview_logged(days=7)
-    assert len(captured_items) == 1
-    assert captured_items[0]["proposal"].published_on is None
-    assert captured_items[0]["proposal"].deadline is None
+    items = main._load_borderline(days=7)
+    assert len(items) == 1
+    assert items[0]["proposal"].published_on is None
+    assert items[0]["proposal"].deadline is None
 
 
-def test_cmd_preview_flagged_invalid_published_on_still_builds(
-    state_paths, monkeypatch, capsys
-) -> None:
-
+def test_load_flagged_invalid_published_on_normalizes_to_none(state_paths) -> None:
     state_paths.flagged.write_text(
         json.dumps(
             [
@@ -548,16 +514,9 @@ def test_cmd_preview_flagged_invalid_published_on_still_builds(
         encoding="utf-8",
     )
 
-    captured_items: list = []
-    monkeypatch.setattr(
-        main,
-        "build_daily_digest",
-        lambda items: captured_items.extend(items) or ("S", "H", "T"),
-    )
-
-    main.cmd_preview_flagged()
-    assert len(captured_items) == 1
-    assert captured_items[0]["proposal"].published_on is None
+    items = main._load_flagged()
+    assert len(items) == 1
+    assert items[0]["proposal"].published_on is None
 
 
 def test_cmd_reset_state_clears_files(state_paths, monkeypatch, capsys) -> None:
@@ -589,19 +548,7 @@ def test_cmd_reset_state_aborts_on_no(state_paths, monkeypatch, capsys) -> None:
     assert "Aborted." in capsys.readouterr().out
 
 
-def test_cmd_preview_flagged_empty_file(state_paths, monkeypatch, capsys) -> None:
-
-    state_paths.flagged.write_text("[]", encoding="utf-8")
-
-    main.cmd_preview_flagged()
-    out = capsys.readouterr().out
-    assert "no flagged items" in out.lower()
-
-
-def test_cmd_preview_flagged_invalid_deadline_still_builds(
-    state_paths, monkeypatch, capsys
-) -> None:
-
+def test_load_flagged_invalid_deadline_normalizes_to_none(state_paths) -> None:
     state_paths.flagged.write_text(
         json.dumps(
             [
@@ -619,22 +566,12 @@ def test_cmd_preview_flagged_invalid_deadline_still_builds(
         encoding="utf-8",
     )
 
-    captured: list = []
-    monkeypatch.setattr(
-        main,
-        "build_daily_digest",
-        lambda flagged, borderline=None: captured.extend(flagged) or ("S", "H", "T"),
-    )
-
-    main.cmd_preview_flagged()
-    # Invalid deadline string is normalized to None before reaching the digest
-    assert captured[0]["proposal"].deadline is None
+    items = main._load_flagged()
+    # Invalid deadline string is normalized to None (item kept since expiry unknown)
+    assert items[0]["proposal"].deadline is None
 
 
-def test_cmd_preview_flagged_missing_deadline_still_builds(
-    state_paths, monkeypatch, capsys
-) -> None:
-
+def test_load_flagged_missing_deadline_normalizes_to_none(state_paths) -> None:
     state_paths.flagged.write_text(
         json.dumps(
             [
@@ -651,16 +588,8 @@ def test_cmd_preview_flagged_missing_deadline_still_builds(
         encoding="utf-8",
     )
 
-    captured: list = []
-    monkeypatch.setattr(
-        main,
-        "build_daily_digest",
-        lambda flagged, borderline=None: captured.extend(flagged) or ("S", "H", "T"),
-    )
-
-    main.cmd_preview_flagged()
-    # Missing deadline field surfaces as proposal.deadline = None
-    assert captured[0]["proposal"].deadline is None
+    items = main._load_flagged()
+    assert items[0]["proposal"].deadline is None
 
 
 def test_load_flagged_excludes_expired_items(state_paths) -> None:

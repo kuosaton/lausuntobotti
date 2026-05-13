@@ -12,9 +12,8 @@ _DISPATCHABLE_COMMANDS = (
     "cmd_weekly",
     "cmd_midweek",
     "cmd_review_logged",
-    "cmd_preview_flagged",
-    "cmd_preview_logged",
-    "cmd_send_flagged",
+    "cmd_preview_digest",
+    "cmd_resend_digest",
     "cmd_reset_state",
 )
 
@@ -47,7 +46,6 @@ def _menu_input(inputs: list[str]):
     [
         # Simple no-arg commands
         (["--update-context"], "cmd_update_context", ()),
-        (["--preview-flagged"], "cmd_preview_flagged", ()),
         (["--reset-state"], "cmd_reset_state", ()),
         (["--interactive"], "cmd_interactive", ()),
         # Commands that take dry_run — both default (False) and explicit True
@@ -56,13 +54,14 @@ def _menu_input(inputs: list[str]):
         (["--weekly"], "cmd_weekly", (False,)),
         (["--weekly", "--dry-run"], "cmd_weekly", (True,)),
         (["--midweek"], "cmd_midweek", (False,)),
-        (["--send-flagged"], "cmd_send_flagged", (False,)),
-        (["--send-flagged", "--dry-run"], "cmd_send_flagged", (True,)),
+        (["--resend-digest"], "cmd_resend_digest", (False, 7)),
+        (["--resend-digest", "--dry-run"], "cmd_resend_digest", (True, 7)),
+        (["--resend-digest", "--dry-run", "--days", "14"], "cmd_resend_digest", (True, 14)),
         # Commands that take a days argument — default and explicit
         (["--review-logged"], "cmd_review_logged", (7,)),
         (["--review-logged", "--days", "14"], "cmd_review_logged", (14,)),
-        (["--preview-logged"], "cmd_preview_logged", (7,)),
-        (["--preview-logged", "--days", "3"], "cmd_preview_logged", (3,)),
+        (["--preview-digest"], "cmd_preview_digest", (7,)),
+        (["--preview-digest", "--days", "3"], "cmd_preview_digest", (3,)),
     ],
 )
 def test_main_dispatches_cli_flag(monkeypatch, argv, cmd_attr, expected_call) -> None:
@@ -72,7 +71,6 @@ def test_main_dispatches_cli_flag(monkeypatch, argv, cmd_attr, expected_call) ->
     captured: dict = {"args": None}
 
     def _capture(*args, **kwargs):
-        # Normalize: positional args plus keyword args in declared order
         captured["args"] = args + tuple(kwargs.values())
 
     monkeypatch.setattr(main, cmd_attr, _capture)
@@ -107,9 +105,8 @@ def test_main_dispatches_all_selected_flags(monkeypatch) -> None:
             "--review-logged",
             "--days",
             "3",
-            "--preview-flagged",
-            "--send-flagged",
-            "--preview-logged",
+            "--preview-digest",
+            "--resend-digest",
             "--dry-run",
         ],
     )
@@ -121,9 +118,8 @@ def test_main_dispatches_all_selected_flags(monkeypatch) -> None:
     assert called["cmd_weekly"][1] == {"dry_run": True}
     assert called["cmd_midweek"][1] == {"dry_run": True}
     assert called["cmd_review_logged"][1] == {"days": 3}
-    assert "cmd_preview_flagged" in called
-    assert called["cmd_send_flagged"][1] == {"dry_run": True}
-    assert called["cmd_preview_logged"][1] == {"days": 3}
+    assert called["cmd_preview_digest"][1] == {"days": 3}
+    assert called["cmd_resend_digest"][1] == {"dry_run": True, "days": 3}
 
 
 def test_main_without_flags_launches_interactive(monkeypatch) -> None:
@@ -144,9 +140,9 @@ def test_main_without_flags_launches_interactive(monkeypatch) -> None:
         ("2", "cmd_daily", (True,)),
         ("3", "cmd_update_context", ()),
         ("4", "cmd_review_logged", (7,)),
-        ("6", "cmd_preview_flagged", ()),
-        ("8", "cmd_send_flagged", (False,)),
-        ("9", "cmd_reset_state", ()),
+        ("6", "cmd_preview_digest", ()),
+        ("7", "cmd_resend_digest", (False,)),
+        ("8", "cmd_reset_state", ()),
     ],
 )
 def test_interactive_menu_dispatches_choice(monkeypatch, menu_key, cmd_attr, expected_call) -> None:
@@ -164,20 +160,6 @@ def test_interactive_menu_dispatches_choice(monkeypatch, menu_key, cmd_attr, exp
 
     main.main()
     assert captured["args"] == expected_call
-
-
-def test_interactive_menu_choice_preview_logged_uses_default_days(monkeypatch) -> None:
-    """Option 7 prompts for days; empty input → default 7."""
-    _stub_dispatchable(monkeypatch)
-    called: dict = {}
-    monkeypatch.setattr(main, "cmd_preview_logged", lambda days: called.__setitem__("days", days))
-    # Inputs: "7" (menu choice), "" (empty days → default), "0" (exit)
-    inputs = iter(["7", "", "0"])
-    monkeypatch.setattr("builtins.input", lambda prompt: next(inputs))
-    monkeypatch.setattr("sys.argv", ["main.py"])
-
-    main.main()
-    assert called["days"] == 7
 
 
 def test_interactive_menu_invalid_choice(monkeypatch) -> None:
