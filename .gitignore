@@ -41,9 +41,11 @@ coverage.xml
 .vscode/
 .idea/
 
-# Runtime state
-state/
-context/
+# Runtime state — track the directories themselves but ignore their contents
+state/*
+context/*
+!state/.gitkeep
+!context/.gitkeep
 
 # Mutation testing workspace
 mutants/
