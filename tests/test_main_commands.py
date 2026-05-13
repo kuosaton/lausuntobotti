@@ -70,7 +70,7 @@ def test_cmd_daily_no_new_proposals_exits_cleanly(tmp_path, monkeypatch, capsys)
     assert "Nothing new to score." in out
 
 
-def test_cmd_daily_borderline_item_is_logged_only(tmp_path, monkeypatch) -> None:
+def test_cmd_daily_borderline_item_is_logged_but_not_flagged(tmp_path, monkeypatch) -> None:
     seen_path, score_log_path, flagged_path, _context_path = _setup_state_paths(
         tmp_path, monkeypatch
     )
@@ -111,6 +111,43 @@ def test_cmd_daily_borderline_item_is_logged_only(tmp_path, monkeypatch) -> None
     assert log_entry["organization"] == "Testi"
     assert log_entry["url"] == "https://example.invalid/p/borderline-1"
     assert log_entry["deadline"] is not None
+
+
+def test_cmd_daily_borderline_only_triggers_digest(tmp_path, monkeypatch) -> None:
+    _setup_state_paths(tmp_path, monkeypatch)
+
+    proposal = Proposal(
+        id="borderline-only",
+        title="Vain rajatapaus",
+        organization_name="Testi",
+        abstract="Kuvaus",
+        deadline=datetime.now(main.UTC) + timedelta(days=3),
+        published_on=datetime.now(main.UTC),
+        url="https://example.invalid/p/borderline-only",
+    )
+
+    captured: dict = {}
+
+    monkeypatch.setattr(main, "fetch_recent", lambda client, top: [proposal])
+    monkeypatch.setattr(main, "get_participation_flags", lambda client, pid, name: (False, False))
+    monkeypatch.setattr(
+        main,
+        "score_item",
+        lambda *args, **kwargs: {"score": 5, "rationale": "Rajatapaus", "themes": []},
+    )
+
+    def _capture_build(flagged, borderline=None):
+        captured["flagged"] = list(flagged)
+        captured["borderline"] = list(borderline or [])
+        return "SUBJ", "<p>H</p>", "TEXT"
+
+    monkeypatch.setattr(main, "build_daily_digest", _capture_build)
+
+    main.cmd_daily(dry_run=True)
+
+    assert captured["flagged"] == []
+    assert len(captured["borderline"]) == 1
+    assert captured["borderline"][0]["score"] == 5
 
 
 def test_cmd_review_logged_shows_borderline_and_excludes_flagged_and_old(
@@ -241,20 +278,16 @@ def test_cmd_daily_non_dry_run_sends_email(tmp_path, monkeypatch) -> None:
     )
     monkeypatch.setattr(
         main,
-        "build_daily_digest",
-        lambda flagged: ("S", "<p>H</p>", "T"),
-    )
-    monkeypatch.setattr(
-        main,
         "send_email",
         lambda subject, html_body, text_body: calls.update(
             {"subject": subject, "html": html_body, "text": text_body}
         ),
     )
     main.cmd_daily(dry_run=False)
-    assert calls["subject"] == "S"
-    assert calls["html"] == "<p>H</p>"
-    assert calls["text"] == "T"
+    # Real digest reaches send_email with the proposal's title in the body
+    assert "Nostettava" in calls["text"]
+    assert "Nostettava" in calls["html"]
+    assert calls["subject"].startswith("Uusia lausuntopyyntöjä")
 
 
 def test_cmd_daily_aborts_on_user_no(tmp_path, monkeypatch, capsys) -> None:
@@ -309,9 +342,6 @@ def test_cmd_daily_dry_run_prints_digest_but_does_not_send(tmp_path, monkeypatch
         "score_item",
         lambda *args, **kwargs: {"score": 8, "rationale": "OK", "themes": []},
     )
-    monkeypatch.setattr(
-        main, "build_daily_digest", lambda flagged: ("SUB", "<p>H</p>", "TEXT BODY")
-    )
 
     def _should_not_send(*args, **kwargs):
         raise AssertionError("send_email should not run in dry-run mode")
@@ -320,8 +350,8 @@ def test_cmd_daily_dry_run_prints_digest_but_does_not_send(tmp_path, monkeypatch
 
     main.cmd_daily(dry_run=True)
     out = capsys.readouterr().out
-    assert "Subject: SUB" in out
-    assert "TEXT BODY" in out
+    # Real digest is printed (contains the proposal title) but email is not sent
+    assert "Dryrun nostettava" in out
     assert "--- DRY RUN: would send email ---" in out
 
     seen = json.loads(seen_path.read_text(encoding="utf-8"))
@@ -342,7 +372,9 @@ def test_deliver_digest_aborts_when_send_declined(monkeypatch, capsys) -> None:
             "themes": [],
         }
     ]
-    monkeypatch.setattr(main, "build_daily_digest", lambda f: ("S", "<p>H</p>", "Body"))
+    monkeypatch.setattr(
+        main, "build_daily_digest", lambda f, borderline=None: ("S", "<p>H</p>", "Body")
+    )
     monkeypatch.setattr(
         main, "send_email", lambda subject, html_body, text_body: sent.__setitem__("called", True)
     )
@@ -456,20 +488,14 @@ def test_cmd_preview_logged_renders_borderline_items(tmp_path, monkeypatch, caps
         encoding="utf-8",
     )
 
-    captured_items: list = []
-    monkeypatch.setattr(
-        main,
-        "build_daily_digest",
-        lambda items: captured_items.extend(items) or ("SUBJ", "HTML", f"ITEMS:{len(items)}"),
-    )
-
     main.cmd_preview_logged(days=7)
     out = capsys.readouterr().out
-    assert "Subject: SUBJ" in out
-    assert "ITEMS:1" in out  # only the recent entry, not the 10-day-old one
-    assert captured_items[0]["proposal"].organization_name == "Testivirasto"
-    assert captured_items[0]["proposal"].url == "https://example.invalid/p/1"
-    assert captured_items[0]["proposal"].deadline is not None
+    # Real digest renders the recent borderline item with its details
+    assert "Rajatapaus" in out
+    assert "Testivirasto" in out
+    assert "https://example.invalid/p/1" in out
+    # Old item (>7 days) is excluded
+    assert "Vanha rajatapaus" not in out
 
 
 def test_cmd_preview_logged_filters_above_notify_threshold(tmp_path, monkeypatch, capsys) -> None:
@@ -487,15 +513,13 @@ def test_cmd_preview_logged_filters_above_notify_threshold(tmp_path, monkeypatch
         encoding="utf-8",
     )
 
-    monkeypatch.setattr(
-        main,
-        "build_daily_digest",
-        lambda items: ("S", "H", f"COUNT:{len(items)}"),
-    )
-
     main.cmd_preview_logged(days=7)
     out = capsys.readouterr().out
-    assert "COUNT:1" in out  # only the borderline item (score 5)
+    # Only the borderline item (score 5) reaches the digest; flagged (7) and
+    # below-LOG_THRESHOLD (2) are filtered out
+    assert "Rajalla" in out
+    assert "Nostettu" not in out
+    assert "Liian alhainen" not in out
 
 
 def test_cmd_preview_logged_invalid_dates_still_builds(tmp_path, monkeypatch, capsys) -> None:
@@ -625,16 +649,16 @@ def test_cmd_preview_flagged_invalid_deadline_still_builds(tmp_path, monkeypatch
         encoding="utf-8",
     )
 
-    def _fake_build_daily_digest(flagged):
-        assert flagged[0]["proposal"].deadline is None
-        return "SUBJ", "HTML", "TEXT"
-
-    monkeypatch.setattr(main, "build_daily_digest", _fake_build_daily_digest)
+    captured: list = []
+    monkeypatch.setattr(
+        main,
+        "build_daily_digest",
+        lambda flagged, borderline=None: captured.extend(flagged) or ("S", "H", "T"),
+    )
 
     main.cmd_preview_flagged()
-    out = capsys.readouterr().out
-    assert "Subject: SUBJ" in out
-    assert "TEXT" in out
+    # Invalid deadline string is normalized to None before reaching the digest
+    assert captured[0]["proposal"].deadline is None
 
 
 def test_cmd_preview_flagged_missing_deadline_still_builds(tmp_path, monkeypatch, capsys) -> None:
@@ -657,13 +681,13 @@ def test_cmd_preview_flagged_missing_deadline_still_builds(tmp_path, monkeypatch
         encoding="utf-8",
     )
 
-    def _fake_build_daily_digest(flagged):
-        assert flagged[0]["proposal"].deadline is None
-        return "SUBJ3", "HTML3", "TEXT3"
-
-    monkeypatch.setattr(main, "build_daily_digest", _fake_build_daily_digest)
+    captured: list = []
+    monkeypatch.setattr(
+        main,
+        "build_daily_digest",
+        lambda flagged, borderline=None: captured.extend(flagged) or ("S", "H", "T"),
+    )
 
     main.cmd_preview_flagged()
-    out = capsys.readouterr().out
-    assert "Subject: SUBJ3" in out
-    assert "TEXT3" in out
+    # Missing deadline field surfaces as proposal.deadline = None
+    assert captured[0]["proposal"].deadline is None

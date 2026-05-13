@@ -148,12 +148,13 @@ def test_cmd_preview_flagged_valid_deadline_branch(tmp_path, monkeypatch, capsys
         encoding="utf-8",
     )
 
-    def _fake_build_daily_digest(flagged):
-        assert flagged[0]["proposal"].deadline is not None
-        assert flagged[0]["proposal"].published_on is not None
-        return "SUBJ2", "HTML", "TEXT2"
-
-    monkeypatch.setattr(main, "build_daily_digest", _fake_build_daily_digest)
+    captured: list = []
+    monkeypatch.setattr(
+        main,
+        "build_daily_digest",
+        lambda flagged, borderline=None: captured.extend(flagged) or ("S", "H", "T"),
+    )
     main.cmd_preview_flagged()
-    out = capsys.readouterr().out
-    assert "Subject: SUBJ2" in out
+    # Valid ISO date strings are parsed into datetime objects
+    assert captured[0]["proposal"].deadline is not None
+    assert captured[0]["proposal"].published_on is not None
