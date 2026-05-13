@@ -74,6 +74,15 @@ uv sync               # runtime dependencies only
 uv sync --extra dev   # include dev tools (pytest, ruff, pyright, pre-commit)
 ```
 
+`uv sync` creates a `.venv/` directory in the project root with the project and its dependencies installed. All examples in this README prefix commands with `uv run`, which transparently uses that environment. If you prefer to drop the prefix, activate the venv first:
+
+```bash
+source .venv/bin/activate     # macOS/Linux
+.venv\Scripts\activate        # Windows (PowerShell or cmd)
+```
+
+With the venv active, `python main.py`, `pytest`, `ruff`, etc. work directly without `uv run`.
+
 #### 2. Configure the environment
 
 ```bash
