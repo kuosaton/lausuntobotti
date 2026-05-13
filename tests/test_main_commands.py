@@ -281,6 +281,45 @@ def test_cmd_daily_non_dry_run_sends_email(state_paths, monkeypatch) -> None:
     assert calls["subject"].startswith("Uusia lausuntopyyntöjä")
 
 
+def test_cmd_daily_declined_send_does_not_mark_notified(state_paths, monkeypatch) -> None:
+
+    proposal = Proposal(
+        id="decline-send-1",
+        title="Ei laheteta",
+        organization_name="Testi",
+        abstract="Kuvaus",
+        deadline=datetime.now(main.UTC) + timedelta(days=3),
+        published_on=datetime.now(main.UTC),
+        url="https://example.invalid/p/decline-send-1",
+    )
+
+    inputs = iter(["y", "n"])
+    monkeypatch.setattr("builtins.input", lambda _: next(inputs))
+    monkeypatch.setattr(main, "fetch_recent", lambda client, top: [proposal])
+    monkeypatch.setattr(main, "get_participation_flags", lambda client, pid, name: (False, False))
+    monkeypatch.setattr(
+        main,
+        "score_item",
+        lambda *args, **kwargs: {"score": 8, "rationale": "OK", "themes": []},
+    )
+
+    sent = {"called": False}
+    monkeypatch.setattr(
+        main,
+        "send_email",
+        lambda *args, **kwargs: sent.__setitem__("called", True),
+    )
+
+    main.cmd_daily(dry_run=False)
+
+    seen = json.loads(state_paths.seen.read_text(encoding="utf-8"))
+    assert seen["decline-send-1"]["notified"] is False
+    assert seen["decline-send-1"]["notified_at"] is None
+    log_entry = json.loads(state_paths.score_log.read_text(encoding="utf-8").splitlines()[0])
+    assert log_entry["notified"] is False
+    assert sent["called"] is False
+
+
 def test_cmd_daily_aborts_on_user_no(state_paths, monkeypatch, capsys) -> None:
 
     proposal = Proposal(

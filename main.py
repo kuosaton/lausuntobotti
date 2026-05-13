@@ -266,7 +266,7 @@ def _record_result(p: Proposal, result: dict, notified: bool, seen: dict) -> Non
 
 def _deliver_digest(
     flagged: list[dict], dry_run: bool, borderline: list[dict] | None = None
-) -> None:
+) -> bool:
     borderline = borderline or []
     if flagged:
         print(f"\n{len(flagged)} item(s) above threshold:")
@@ -281,14 +281,72 @@ def _deliver_digest(
     print(text_body)
     if dry_run:
         print("\n--- DRY RUN: would send email ---")
-        return
+        return False
     recipient = os.environ.get("RECIPIENT_EMAIL", "?")
     answer = input(f"\nSend to {recipient}? [Y/n] ").strip().lower()
-    if answer != "y":
+    if answer not in ("", "y"):
         print("Aborted.")
-        return
+        return False
     send_email(subject=subject, html_body=html_body, text_body=text_body)
     print(f"Email sent to {recipient}")
+    return True
+
+
+def _score_lausuntopyynto_proposals(
+    new_proposals: list[Proposal],
+    ctx: dict,
+    seen: dict,
+) -> tuple[list[dict], list[dict], list[tuple[Proposal, dict]]]:
+    flagged = []
+    borderline = []
+    scored_results: list[tuple[Proposal, dict]] = []
+
+    with httpx.Client() as client:
+        for p in new_proposals:
+            result = _score_proposal(client, p, ctx)
+            if result is None:
+                continue
+
+            skip_reason = result.get("_skip_reason")
+            if skip_reason in ("jakelu", "already_responded"):
+                now = datetime.now(UTC).isoformat()
+                seen[p.id] = {
+                    "first_seen": now,
+                    "title": p.title,
+                    "score": 0,
+                    "notified": False,
+                    "notified_at": None,
+                    "status": f"skipped_{skip_reason}",
+                    "published_on": p.published_on.isoformat(),
+                }
+                continue
+
+            score = result["score"]
+            scored_results.append((p, result))
+
+            if score >= config.NOTIFY_THRESHOLD:
+                print(f"  [FLAG {score}/10] {p.title}")
+                flagged.append({"proposal": p, **result})
+            elif score >= config.LOG_THRESHOLD:
+                print(f"  [LOG {score}/10] {p.title}")
+                borderline.append({"proposal": p, **result})
+            else:
+                print(f"  [DROP {score}/10] {p.title}")
+
+    return flagged, borderline, scored_results
+
+
+def _record_lausuntopyynto_results(
+    scored_results: list[tuple[Proposal, dict]],
+    digest_sent: bool,
+    seen: dict,
+) -> None:
+    for p, result in scored_results:
+        notified = result["score"] >= config.NOTIFY_THRESHOLD and digest_sent
+        _record_result(p, result, notified, seen)
+        if result["score"] >= config.NOTIFY_THRESHOLD:
+            flagged_entry = _build_scored_entry(p, result, datetime.now(UTC).isoformat())
+            _append_flagged(flagged_entry)
 
 
 def cmd_lausuntopyynnot(dry_run: bool) -> None:
@@ -314,56 +372,21 @@ def cmd_lausuntopyynnot(dry_run: bool) -> None:
         return
 
     answer = input(f"Score {len(new_proposals)} proposal(s)? [Y/n] ").strip().lower()
-    if answer != "y":
+    if answer not in ("", "y"):
         print("Aborted.")
         return
 
-    flagged = []
-    borderline = []
-
-    with httpx.Client() as client:
-        for p in new_proposals:
-            result = _score_proposal(client, p, ctx)
-            if result is None:
-                continue
-
-            skip_reason = result.get("_skip_reason")
-            if skip_reason in ("jakelu", "already_responded"):
-                now = datetime.now(UTC).isoformat()
-                seen[p.id] = {
-                    "first_seen": now,
-                    "title": p.title,
-                    "score": 0,
-                    "notified": False,
-                    "notified_at": None,
-                    "status": f"skipped_{skip_reason}",
-                    "published_on": p.published_on.isoformat(),
-                }
-                continue
-
-            score = result["score"]
-            notified = score >= config.NOTIFY_THRESHOLD and not dry_run
-
-            _record_result(p, result, notified, seen)
-
-            if score >= config.NOTIFY_THRESHOLD:
-                print(f"  [FLAG {score}/10] {p.title}")
-                flagged.append({"proposal": p, **result})
-                flagged_entry = _build_scored_entry(p, result, datetime.now(UTC).isoformat())
-                _append_flagged(flagged_entry)
-            elif score >= config.LOG_THRESHOLD:
-                print(f"  [LOG {score}/10] {p.title}")
-                borderline.append({"proposal": p, **result})
-            else:
-                print(f"  [DROP {score}/10] {p.title}")
-
-    _save_json(config.SEEN_PROPOSALS_PATH, seen)
+    flagged, borderline, scored_results = _score_lausuntopyynto_proposals(new_proposals, ctx, seen)
 
     if not flagged and not borderline:
+        _record_lausuntopyynto_results(scored_results, digest_sent=False, seen=seen)
+        _save_json(config.SEEN_PROPOSALS_PATH, seen)
         print("No items above log threshold.")
         return
 
-    _deliver_digest(flagged, dry_run, borderline=borderline)
+    digest_sent = _deliver_digest(flagged, dry_run, borderline=borderline)
+    _record_lausuntopyynto_results(scored_results, digest_sent, seen)
+    _save_json(config.SEEN_PROPOSALS_PATH, seen)
 
 
 def cmd_daily(dry_run: bool) -> None:
@@ -429,7 +452,6 @@ def _score_weekly_matter(
     matter: Matter,
     committee_key: str,
     ctx: dict,
-    dry_run: bool,
 ) -> dict | None:
     try:
         result = score_item(matter.title, matter.type, committee_key, ctx)
@@ -437,23 +459,28 @@ def _score_weekly_matter(
         print(f"  [ERROR] scoring {matter.eduskuntatunnus}: {exc}", file=sys.stderr)
         return None
 
-    score = result["score"]
-    notified = score >= config.NOTIFY_THRESHOLD and not dry_run
+    return result
+
+
+def _record_weekly_matter(
+    matter: Matter,
+    committee_key: str,
+    result: dict,
+    notified: bool,
+) -> None:
     _append_log(
         {
             "timestamp": datetime.now(UTC).isoformat(),
             "source": committee_key,
             "id": matter.eduskuntatunnus,
             "title": matter.title,
-            "score": score,
+            "score": result["score"],
             "rationale": result.get("rationale", ""),
             "themes": result.get("themes", []),
             "notified": notified,
         },
         path=config.VALIOKUNTA_SCORE_LOG_PATH,
     )
-    result["notified"] = notified
-    return result
 
 
 def _deliver_weekly(
@@ -462,8 +489,13 @@ def _deliver_weekly(
     total_scored: int,
     total_logged: int,
     dry_run: bool,
-) -> None:
+) -> bool:
     week_number = datetime.now(UTC).isocalendar().week
+    total_flagged = sum(len(items) for items in committee_items.values())
+    if total_flagged == 0 and total_logged == 0:
+        print("No valiokunta items above log threshold.")
+        return False
+
     subject, html_body, text_body = build_weekly_digest(
         committee_items,
         week_number,
@@ -471,15 +503,21 @@ def _deliver_weekly(
         total_logged,
         borderline_items=borderline_items,
     )
-    total_flagged = sum(len(items) for items in committee_items.values())
+    print(f"\nSubject: {subject}")
+    print(text_body)
     if dry_run:
         print(f"\n--- DRY RUN: would send valiokunta digest ({total_flagged} flagged) ---")
-        print(f"Subject: {subject}\n")
-        print(text_body)
-        return
+        return False
+
+    recipient = os.environ.get("RECIPIENT_EMAIL", "?")
+    answer = input(f"\nSend to {recipient}? [Y/n] ").strip().lower()
+    if answer not in ("", "y"):
+        print("Aborted.")
+        return False
 
     send_email(subject=subject, html_body=html_body, text_body=text_body)
     print(f"\nWeekly digest sent: {total_flagged} flagged, {total_logged} logged")
+    return True
 
 
 def cmd_valiokunta(dry_run: bool) -> None:
@@ -510,6 +548,7 @@ def cmd_valiokunta(dry_run: bool) -> None:
 
     committee_items: dict[str, list[dict]] = {key: [] for key in _WEEKLY_COMMITTEES}
     borderline_items: dict[str, list[dict]] = {key: [] for key in _WEEKLY_COMMITTEES}
+    scored_matters: list[tuple[str, str, Matter, dict]] = []
     total_scored = 0
     total_logged = 0
 
@@ -517,16 +556,13 @@ def cmd_valiokunta(dry_run: bool) -> None:
         if agenda.edktunnus not in seen_docs:
             _mark_agenda_seen(seen_docs, agenda)
         for matter in matters:
-            result = _score_weekly_matter(matter, committee_key, ctx, dry_run)
+            result = _score_weekly_matter(matter, committee_key, ctx)
             if result is None:
                 continue
 
             score = result["score"]
             total_scored += 1
-            seen_docs[agenda.edktunnus]["matter_scores"][matter.eduskuntatunnus] = {
-                "score": score,
-                "notified": result["notified"],
-            }
+            scored_matters.append((agenda.edktunnus, committee_key, matter, result))
 
             if score >= config.NOTIFY_THRESHOLD:
                 print(f"  [FLAG {score}/10] {matter.eduskuntatunnus}: {matter.title}")
@@ -556,8 +592,18 @@ def cmd_valiokunta(dry_run: bool) -> None:
             else:
                 print(f"  [DROP {score}/10] {matter.eduskuntatunnus}: {matter.title}")
 
+    digest_sent = _deliver_weekly(
+        committee_items, borderline_items, total_scored, total_logged, dry_run
+    )
+    for agenda_id, committee_key, matter, result in scored_matters:
+        notified = result["score"] >= config.NOTIFY_THRESHOLD and digest_sent
+        _record_weekly_matter(matter, committee_key, result, notified)
+        seen_docs[agenda_id]["matter_scores"][matter.eduskuntatunnus] = {
+            "score": result["score"],
+            "notified": notified,
+        }
+
     _save_json(config.SEEN_DOCUMENTS_PATH, seen_docs)
-    _deliver_weekly(committee_items, borderline_items, total_scored, total_logged, dry_run)
 
 
 def cmd_weekly(dry_run: bool) -> None:
@@ -812,8 +858,10 @@ def _menu_items() -> list[_MenuItem]:
             "key": "2",
             "label": "Valiokunta check",
             "description": [
-                "Fetch new committee agendas, score scheduled matters,",
-                "and optionally send the valiokunta digest.",
+                "Fetch new Talousvaliokunta agendas, score scheduled",
+                "matters, and ask before sending the valiokunta digest.",
+                "Maa- ja metsätalousvaliokunta and Ympäristövaliokunta",
+                "support is planned next.",
             ],
             "action": _menu_valiokunta,
         },
@@ -896,17 +944,12 @@ def _format_help(items: list[_MenuItem]) -> str:
     return "\n".join(lines)
 
 
-def _prompt_send_digest() -> bool:
-    raw = input("Send email digest if items are found? [Y/n] ").strip().lower()
-    return raw in ("", "y")
-
-
 def _menu_lausuntopyynnot() -> None:
-    _run_lausuntopyynnot(dry_run=not _prompt_send_digest())
+    _run_lausuntopyynnot(dry_run=False)
 
 
 def _menu_valiokunta() -> None:
-    _run_valiokunta(dry_run=not _prompt_send_digest())
+    _run_valiokunta(dry_run=False)
 
 
 def _prompt_review_source() -> str:

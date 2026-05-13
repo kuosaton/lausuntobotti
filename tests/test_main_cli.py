@@ -124,10 +124,8 @@ def test_main_without_flags_launches_interactive(monkeypatch) -> None:
 @pytest.mark.parametrize(
     "menu_inputs, cmd_attr, expected_call",
     [
-        (["1", "y", "0"], "cmd_lausuntopyynnot", (False,)),
-        (["1", "n", "0"], "cmd_lausuntopyynnot", (True,)),
-        (["2", "y", "0"], "cmd_valiokunta", (False,)),
-        (["2", "n", "0"], "cmd_valiokunta", (True,)),
+        (["1", "0"], "cmd_lausuntopyynnot", (False,)),
+        (["2", "0"], "cmd_valiokunta", (False,)),
         (["4", "0"], "cmd_preview_digest", ()),
         (["5", "0"], "cmd_resend_digest", (False,)),
         (["6", "0"], "cmd_update_context", ()),

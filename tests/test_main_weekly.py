@@ -188,6 +188,42 @@ def test_cmd_weekly_non_dry_run_sends_email(state_paths, monkeypatch) -> None:
     assert captured == {"subject": "S", "html": "<h/>", "text": "T"}
 
 
+def test_cmd_weekly_declined_send_does_not_mark_notified(state_paths, monkeypatch) -> None:
+    seen_documents = _setup_weekly_state(state_paths, monkeypatch)
+    inputs = iter(["y", "n"])
+    monkeypatch.setattr("builtins.input", lambda _: next(inputs))
+    monkeypatch.setattr(main, "fetch_committee_page", lambda client, url: "<html/>")
+    monkeypatch.setattr(main, "extract_documents", lambda html: [_doc()])
+    monkeypatch.setattr(main, "fetch_agenda_xml", lambda client, tunnus: "<xml/>")
+    monkeypatch.setattr(main, "parse_agenda_matters", lambda xml: [_matter()])
+    monkeypatch.setattr(
+        main,
+        "score_item",
+        lambda *args, **kwargs: {"score": 9, "rationale": "OK", "themes": []},
+    )
+    monkeypatch.setattr(main, "build_weekly_digest", lambda *args, **kwargs: ("S", "<h/>", "T"))
+
+    sent = {"called": False}
+    monkeypatch.setattr(
+        main,
+        "send_email",
+        lambda *args, **kwargs: sent.__setitem__("called", True),
+    )
+
+    main.cmd_weekly(dry_run=False)
+
+    seen_docs = json.loads(seen_documents.read_text(encoding="utf-8"))
+    assert seen_docs["EDK-1"]["matter_scores"]["HE 1/2026 vp"] == {
+        "score": 9,
+        "notified": False,
+    }
+    log_entry = json.loads(
+        state_paths.valiokunta_score_log.read_text(encoding="utf-8").splitlines()[0]
+    )
+    assert log_entry["notified"] is False
+    assert sent["called"] is False
+
+
 def test_cmd_weekly_handles_agenda_fetch_error(state_paths, monkeypatch, capsys) -> None:
     _setup_weekly_state(state_paths, monkeypatch)
     monkeypatch.setattr(main, "fetch_committee_page", lambda client, url: "<html/>")
