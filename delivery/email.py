@@ -234,16 +234,19 @@ def build_daily_digest(
 
 def _weekly_text_body(
     committee_items: dict[str, list[dict]],
+    borderline_items: dict[str, list[dict]],
     week_number: int,
     total_flagged: int,
     summary_lines: list[str],
 ) -> str:
     lines = [f"Viikkokatsaus, vko {week_number}\n"]
     for key, items in committee_items.items():
+        borderline = borderline_items.get(key, [])
         name = _committee_display_name(key)
         lines.append(f"--- {name.upper()} ---\n")
-        if not items:
+        if not items and not borderline:
             lines.append("Ei nostettavia asioita.\n")
+            continue
         for item in items:
             fields = _weekly_entry_fields(item)
             lines += [
@@ -254,26 +257,31 @@ def _weekly_text_body(
                 f"   {fields['url']}",
                 "",
             ]
+        if borderline:
+            lines.append("Rajatapauksia:\n")
+            for item in borderline:
+                fields = _weekly_entry_fields(item)
+                lines += [
+                    f"▸ [{fields['score']}/10] {fields['title']}",
+                    f"   Tunnus:     {fields['eduskuntatunnus']}",
+                    f"   {fields['rationale']}",
+                    "",
+                ]
     lines += summary_lines
     return "\n".join(lines)
 
 
-def _weekly_html_sections(committee_items: dict[str, list[dict]]) -> str:
-    sections_html = ""
-    for key, items in committee_items.items():
-        name = _committee_display_name(key)
-        items_html = ""
-        if not items:
-            items_html = '<p style="color:#888;font-size:13px;">Ei nostettavia asioita.</p>'
-        for item in items:
-            fields = _weekly_entry_fields(item)
-            themes = ", ".join(fields["themes"])
-            title_html = (
-                f'<a href="{fields["url"]}" style="color:#1a56a0;text-decoration:none;">{fields["title"]}</a>'
-                if fields["url"]
-                else fields["title"]
-            )
-            items_html += f"""
+def _weekly_html_entries(items: list[dict]) -> str:
+    entries_html = ""
+    for item in items:
+        fields = _weekly_entry_fields(item)
+        themes = ", ".join(fields["themes"])
+        title_html = (
+            f'<a href="{fields["url"]}" style="color:#1a56a0;text-decoration:none;">{fields["title"]}</a>'
+            if fields["url"]
+            else fields["title"]
+        )
+        entries_html += f"""
             <div style="margin-bottom:20px;padding:14px;border-left:4px solid #1a56a0;background:#f8f9fa;">
               <p style="margin:0 0 4px;font-size:14px;font-weight:bold;">
                 {title_html}
@@ -283,6 +291,24 @@ def _weekly_html_sections(committee_items: dict[str, list[dict]]) -> str:
               <p style="margin:4px 0;font-size:13px;color:#333;">{fields["rationale"]}</p>
               {f'<p style="margin:4px 0;font-size:12px;color:#888;">Teemat: {themes}</p>' if themes else ""}
             </div>"""
+    return entries_html
+
+
+def _weekly_html_sections(
+    committee_items: dict[str, list[dict]],
+    borderline_items: dict[str, list[dict]],
+) -> str:
+    sections_html = ""
+    for key, items in committee_items.items():
+        name = _committee_display_name(key)
+        borderline = borderline_items.get(key, [])
+        items_html = _weekly_html_entries(items)
+        if not items and not borderline:
+            items_html = '<p style="color:#888;font-size:13px;">Ei nostettavia asioita.</p>'
+        if borderline:
+            items_html += f"""
+            <p style="margin:18px 0 8px;font-size:13px;font-weight:bold;color:#666;">Rajatapauksia</p>
+            {_weekly_html_entries(borderline)}"""
         sections_html += f"""
         <h3 style="color:#1a56a0;border-bottom:1px solid #ddd;padding-bottom:6px;">{name}</h3>
         {items_html}"""
@@ -298,12 +324,12 @@ def _weekly_summary(
         "---",
         f"Arvioitu yhteensä: {total_scored} asiaa",
         f"Nostettu: {total_flagged}",
-        f"Lokitettu (pistemäärä 4-6): {total_logged}",
+        f"Rajatapauksia: {total_logged}",
     ]
     html = (
         '  <p style="font-size:12px;color:#888;">\n'
         f"    Arvioitu: {total_scored} asiaa &ndash; Nostettu: {total_flagged} &ndash;\n"
-        f"    Lokitettu (4-6): {total_logged}\n"
+        f"    Rajatapauksia: {total_logged}\n"
         "  </p>"
     )
     return text_lines, html
@@ -338,12 +364,20 @@ def build_weekly_digest(
     week_number: int,
     total_scored: int,
     total_logged: int,
+    borderline_items: dict[str, list[dict]] | None = None,
 ) -> tuple[str, str, str]:
     subject = f"Lausuntobotin viikkokatsaus, vko {week_number}"
+    borderline_items = borderline_items or {key: [] for key in committee_items}
     total_flagged = sum(len(v) for v in committee_items.values())
     summary_lines, summary_html = _weekly_summary(total_scored, total_flagged, total_logged)
-    text_body = _weekly_text_body(committee_items, week_number, total_flagged, summary_lines)
-    sections_html = _weekly_html_sections(committee_items)
+    text_body = _weekly_text_body(
+        committee_items,
+        borderline_items,
+        week_number,
+        total_flagged,
+        summary_lines,
+    )
+    sections_html = _weekly_html_sections(committee_items, borderline_items)
     html_body = f"""<!DOCTYPE html>
 <html lang="fi">
 <head><meta charset="utf-8"><title>{subject}</title></head>

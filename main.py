@@ -4,9 +4,10 @@ import argparse
 import json
 import os
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from datetime import UTC, datetime
 from datetime import date as date_type
+from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import TypedDict
@@ -15,12 +16,27 @@ import httpx
 from dotenv import load_dotenv
 
 import config
+from clients.eduskunta import (
+    Document,
+    Matter,
+    extract_documents,
+    fetch_agenda_xml,
+    fetch_committee_page,
+    parse_agenda_matters,
+)
 from clients.kuluttajaliitto import build_context, fetch_statements
 from clients.lausuntopalvelu import Proposal, fetch_recent, get_participation_flags
-from delivery.email import build_daily_digest, send_email
+from delivery.email import build_daily_digest, build_weekly_digest, send_email
 from processing.llm_scorer import score_item
 
 load_dotenv()
+
+
+_WEEKLY_COMMITTEES = ("talousvaliokunta",)
+_SOURCE_LAUSUNTOPYYNNOT = "lausuntopyynnot"
+_LOG_SOURCE_LAUSUNTOPALVELU = "lausuntopalvelu"
+_SOURCE_VALIOKUNTA = "valiokunta"
+_VALIOKUNTA_SOURCE_PREFIXES = (*_WEEKLY_COMMITTEES, _SOURCE_VALIOKUNTA)
 
 
 # ---------------------------------------------------------------------------
@@ -48,9 +64,71 @@ def _save_json(path: Path, data: dict) -> None:
     _write_json_atomic(path, data)
 
 
-def _append_log(entry: dict) -> None:
-    with config.SCORE_LOG_PATH.open("a", encoding="utf-8") as f:
+def _append_log(entry: dict, path: Path | None = None) -> None:
+    path = path or config.SCORE_LOG_PATH
+    with path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+
+def _write_jsonl(path: Path, entries: Iterable[dict | str]) -> None:
+    lines = []
+    for entry in entries:
+        if isinstance(entry, str):
+            lines.append(entry.rstrip("\n"))
+        else:
+            lines.append(json.dumps(entry, ensure_ascii=False))
+    path.write_text(("\n".join(lines) + "\n") if lines else "", encoding="utf-8")
+
+
+def _score_log_path(source: str) -> Path:
+    if source == _SOURCE_LAUSUNTOPYYNNOT:
+        return config.LAUSUNTOPALVELU_SCORE_LOG_PATH
+    if source == _SOURCE_VALIOKUNTA:
+        return config.VALIOKUNTA_SCORE_LOG_PATH
+    raise ValueError(f"Unknown score log source: {source!r}")
+
+
+def _is_valiokunta_source(source: object) -> bool:
+    return isinstance(source, str) and source in _VALIOKUNTA_SOURCE_PREFIXES
+
+
+def _migrate_score_log_split() -> None:
+    marker = config.SCORE_LOG_SPLIT_MIGRATION_MARKER
+    if marker.exists():
+        return
+    source_path = config.LAUSUNTOPALVELU_SCORE_LOG_PATH
+    if not source_path.exists():
+        marker.write_text(datetime.now(UTC).isoformat(), encoding="utf-8")
+        return
+
+    lausuntopyynnot: list[dict | str] = []
+    valiokunta: list[dict] = []
+    for line in source_path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            entry = json.loads(stripped)
+        except json.JSONDecodeError:
+            lausuntopyynnot.append(line)
+            continue
+        if _is_valiokunta_source(entry.get("source")):
+            valiokunta.append(entry)
+        else:
+            lausuntopyynnot.append(entry)
+
+    existing_valiokunta = []
+    valiokunta_path = config.VALIOKUNTA_SCORE_LOG_PATH
+    if valiokunta_path.exists() and valiokunta_path.stat().st_size > 0:
+        existing_valiokunta = [
+            line
+            for line in valiokunta_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+
+    _write_jsonl(source_path, lausuntopyynnot)
+    _write_jsonl(valiokunta_path, [*existing_valiokunta, *valiokunta])
+    marker.write_text(datetime.now(UTC).isoformat(), encoding="utf-8")
 
 
 def _append_flagged(entry: dict) -> None:
@@ -68,22 +146,59 @@ def _save_context(ctx: dict) -> None:
     _write_json_atomic(config.CONTEXT_PATH, ctx)
 
 
+def _context_has_statements(ctx: dict) -> bool:
+    return bool(ctx.get("recent_statements"))
+
+
+def _context_is_stale(ctx: dict) -> bool:
+    last_updated = _parse_datetime(ctx.get("last_updated"))
+    if last_updated is None:
+        return True
+    if last_updated.tzinfo is None:
+        last_updated = last_updated.replace(tzinfo=UTC)
+    return datetime.now(UTC) - last_updated > timedelta(days=config.CONTEXT_MAX_AGE_DAYS)
+
+
+def _fetch_context() -> dict:
+    print("Refreshing Kuluttajaliitto context...", flush=True)
+    with httpx.Client() as client:
+        statements = fetch_statements(client, per_page=100)
+    return build_context(statements)
+
+
+def _ensure_context_fresh() -> dict | None:
+    existing = _load_context()
+    if _context_has_statements(existing) and not _context_is_stale(existing):
+        return existing
+    try:
+        new_ctx = _fetch_context()
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        if _context_has_statements(existing):
+            print(
+                f"WARNING: could not refresh Kuluttajaliitto context; using existing context: {exc}",
+                file=sys.stderr,
+            )
+            return existing
+        print(f"ERROR: could not refresh Kuluttajaliitto context: {exc}", file=sys.stderr)
+        return None
+    _save_context(new_ctx)
+    return new_ctx
+
+
 # ---------------------------------------------------------------------------
 # Commands
 # ---------------------------------------------------------------------------
 
 
 def cmd_update_context() -> None:
-    print("Fetching Kuluttajaliitto lausunnot...", flush=True)
-    with httpx.Client() as client:
-        statements = fetch_statements(client, per_page=100)
-    new_ctx = build_context(statements)
+    new_ctx = _fetch_context()
     existing = _load_context()
     if new_ctx["recent_statements"] == existing["recent_statements"]:
-        print(f"Context unchanged ({len(statements)} statements, already up to date).")
+        _save_context(new_ctx)
+        print("Context unchanged (already up to date).")
         return
     _save_context(new_ctx)
-    print(f"Saved {len(statements)} statements to {config.CONTEXT_PATH}")
+    print(f"Saved {len(new_ctx.get('recent_statements', []))} statements to {config.CONTEXT_PATH}")
 
 
 def _score_proposal(client: httpx.Client, proposal: Proposal, ctx: dict) -> dict | None:
@@ -120,7 +235,7 @@ def _score_proposal(client: httpx.Client, proposal: Proposal, ctx: dict) -> dict
 def _build_scored_entry(p: Proposal, result: dict, timestamp: str) -> dict:
     return {
         "timestamp": timestamp,
-        "source": "lausuntopalvelu",
+        "source": _LOG_SOURCE_LAUSUNTOPALVELU,
         "id": p.id,
         "title": p.title,
         "score": result["score"],
@@ -176,13 +291,12 @@ def _deliver_digest(
     print(f"Email sent to {recipient}")
 
 
-def cmd_daily(dry_run: bool) -> None:
-    ctx = _load_context()
-    if not ctx["recent_statements"]:
-        print(
-            "WARNING: Kuluttajaliitto context is empty. Run --update-context first.",
-            file=sys.stderr,
-        )
+def cmd_lausuntopyynnot(dry_run: bool) -> None:
+    _migrate_score_log_split()
+    ctx = _ensure_context_fresh()
+    if ctx is None:
+        print("Aborted.")
+        return
 
     seen = _load_json(config.SEEN_PROPOSALS_PATH)
 
@@ -252,29 +366,213 @@ def cmd_daily(dry_run: bool) -> None:
     _deliver_digest(flagged, dry_run, borderline=borderline)
 
 
-def cmd_weekly(dry_run: bool) -> None:  # pylint: disable=unused-argument
-    print(
-        "Weekly committee digest is not yet implemented (planned for version 0.3.0).",
-        file=sys.stderr,
+def cmd_daily(dry_run: bool) -> None:
+    cmd_lausuntopyynnot(dry_run=dry_run)
+
+
+def _is_agenda(document: Document) -> bool:
+    return document.tyyppikoodi.endswith("VE") and document.eduskuntatunnus is not None
+
+
+def _collect_new_agendas(
+    client: httpx.Client,
+    seen_docs: dict,
+) -> list[tuple[str, Document]]:
+    new_agendas: list[tuple[str, Document]] = []
+    for committee_key in _WEEKLY_COMMITTEES:
+        url = config.COMMITTEE_URLS[committee_key]
+        display = config.COMMITTEE_DISPLAY_NAMES[committee_key]
+        print(f"Fetching {display}...", flush=True)
+        try:
+            html = fetch_committee_page(client, url)
+            documents = extract_documents(html)
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            print(f"  [ERROR] could not fetch/parse {display}: {exc}", file=sys.stderr)
+            continue
+
+        agendas = [doc for doc in documents if _is_agenda(doc) and doc.edktunnus not in seen_docs]
+        print(f"  {len(documents)} documents, {len(agendas)} new agendas")
+        new_agendas.extend((committee_key, agenda) for agenda in agendas)
+    return new_agendas
+
+
+def _resolve_agenda_matters(
+    client: httpx.Client,
+    agendas: list[tuple[str, Document]],
+) -> list[tuple[str, Document, list[Matter]]]:
+    resolved: list[tuple[str, Document, list[Matter]]] = []
+    for committee_key, agenda in agendas:
+        try:
+            xml = fetch_agenda_xml(client, agenda.eduskuntatunnus or "")
+            matters = parse_agenda_matters(xml)
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            print(
+                f"  [ERROR] could not fetch/parse {agenda.eduskuntatunnus}: {exc}",
+                file=sys.stderr,
+            )
+            continue
+        resolved.append((committee_key, agenda, matters))
+    return resolved
+
+
+def _mark_agenda_seen(seen_docs: dict, agenda: Document) -> None:
+    seen_docs[agenda.edktunnus] = {
+        "first_seen": datetime.now(UTC).isoformat(),
+        "eduskuntatunnus": agenda.eduskuntatunnus,
+        "nimeke": agenda.nimeke,
+        "score": None,
+        "matter_scores": {},
+    }
+
+
+def _score_weekly_matter(
+    matter: Matter,
+    committee_key: str,
+    ctx: dict,
+    dry_run: bool,
+) -> dict | None:
+    try:
+        result = score_item(matter.title, matter.type, committee_key, ctx)
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        print(f"  [ERROR] scoring {matter.eduskuntatunnus}: {exc}", file=sys.stderr)
+        return None
+
+    score = result["score"]
+    notified = score >= config.NOTIFY_THRESHOLD and not dry_run
+    _append_log(
+        {
+            "timestamp": datetime.now(UTC).isoformat(),
+            "source": committee_key,
+            "id": matter.eduskuntatunnus,
+            "title": matter.title,
+            "score": score,
+            "rationale": result.get("rationale", ""),
+            "themes": result.get("themes", []),
+            "notified": notified,
+        },
+        path=config.VALIOKUNTA_SCORE_LOG_PATH,
     )
-    sys.exit(1)
+    result["notified"] = notified
+    return result
 
 
-def cmd_midweek(dry_run: bool) -> None:  # pylint: disable=unused-argument
-    print(
-        "Midweek committee check is not yet implemented (planned for version 0.3.0).",
-        file=sys.stderr,
+def _deliver_weekly(
+    committee_items: dict[str, list[dict]],
+    borderline_items: dict[str, list[dict]],
+    total_scored: int,
+    total_logged: int,
+    dry_run: bool,
+) -> None:
+    week_number = datetime.now(UTC).isocalendar().week
+    subject, html_body, text_body = build_weekly_digest(
+        committee_items,
+        week_number,
+        total_scored,
+        total_logged,
+        borderline_items=borderline_items,
     )
-    sys.exit(1)
+    total_flagged = sum(len(items) for items in committee_items.values())
+    if dry_run:
+        print(f"\n--- DRY RUN: would send valiokunta digest ({total_flagged} flagged) ---")
+        print(f"Subject: {subject}\n")
+        print(text_body)
+        return
+
+    send_email(subject=subject, html_body=html_body, text_body=text_body)
+    print(f"\nWeekly digest sent: {total_flagged} flagged, {total_logged} logged")
 
 
-def _read_borderline_entries(days: int = 7) -> list[dict]:
+def cmd_valiokunta(dry_run: bool) -> None:
+    _migrate_score_log_split()
+    ctx = _ensure_context_fresh()
+    if ctx is None:
+        print("Aborted.")
+        return
+
+    seen_docs = _load_json(config.SEEN_DOCUMENTS_PATH)
+
+    with httpx.Client() as client:
+        new_agendas = _collect_new_agendas(client, seen_docs)
+        if not new_agendas:
+            print("No new committee agendas to process.")
+            return
+        agenda_matters = _resolve_agenda_matters(client, new_agendas)
+
+    total_matters = sum(len(matters) for _, _, matters in agenda_matters)
+    if total_matters == 0:
+        print("No matters scheduled in the new agendas.")
+        return
+
+    answer = input(f"Score {total_matters} matter(s)? [Y/n] ").strip().lower()
+    if answer not in ("", "y"):
+        print("Aborted.")
+        return
+
+    committee_items: dict[str, list[dict]] = {key: [] for key in _WEEKLY_COMMITTEES}
+    borderline_items: dict[str, list[dict]] = {key: [] for key in _WEEKLY_COMMITTEES}
+    total_scored = 0
+    total_logged = 0
+
+    for committee_key, agenda, matters in agenda_matters:
+        if agenda.edktunnus not in seen_docs:
+            _mark_agenda_seen(seen_docs, agenda)
+        for matter in matters:
+            result = _score_weekly_matter(matter, committee_key, ctx, dry_run)
+            if result is None:
+                continue
+
+            score = result["score"]
+            total_scored += 1
+            seen_docs[agenda.edktunnus]["matter_scores"][matter.eduskuntatunnus] = {
+                "score": score,
+                "notified": result["notified"],
+            }
+
+            if score >= config.NOTIFY_THRESHOLD:
+                print(f"  [FLAG {score}/10] {matter.eduskuntatunnus}: {matter.title}")
+                committee_items[committee_key].append(
+                    {
+                        "title": matter.title,
+                        "eduskuntatunnus": matter.eduskuntatunnus,
+                        "score": score,
+                        "rationale": result.get("rationale", ""),
+                        "themes": result.get("themes", []),
+                        "url": "",
+                    }
+                )
+            elif score >= config.LOG_THRESHOLD:
+                total_logged += 1
+                print(f"  [LOG {score}/10] {matter.eduskuntatunnus}: {matter.title}")
+                borderline_items[committee_key].append(
+                    {
+                        "title": matter.title,
+                        "eduskuntatunnus": matter.eduskuntatunnus,
+                        "score": score,
+                        "rationale": result.get("rationale", ""),
+                        "themes": result.get("themes", []),
+                        "url": "",
+                    }
+                )
+            else:
+                print(f"  [DROP {score}/10] {matter.eduskuntatunnus}: {matter.title}")
+
+    _save_json(config.SEEN_DOCUMENTS_PATH, seen_docs)
+    _deliver_weekly(committee_items, borderline_items, total_scored, total_logged, dry_run)
+
+
+def cmd_weekly(dry_run: bool) -> None:
+    cmd_valiokunta(dry_run=dry_run)
+
+
+def _read_borderline_entries(days: int = 7, source: str = _SOURCE_LAUSUNTOPYYNNOT) -> list[dict]:
     """Return raw score-log dicts for borderline items within the last `days` days."""
-    if not config.SCORE_LOG_PATH.exists():
+    _migrate_score_log_split()
+    path = _score_log_path(source)
+    if not path.exists():
         return []
     cutoff = datetime.now(UTC).timestamp() - days * 86400
     entries = []
-    with config.SCORE_LOG_PATH.open(encoding="utf-8") as f:
+    with path.open(encoding="utf-8") as f:
         for line in f:
             stripped = line.strip()
             if not stripped:
@@ -327,18 +625,42 @@ def _build_proposal(entry: dict, *, skip_expired: bool) -> SimpleNamespace | Non
     )
 
 
-def cmd_review_logged(days: int = 7) -> None:
-    entries = _read_borderline_entries(days)
-    if not entries:
+def _review_sources(source: str) -> list[tuple[str, str]]:
+    if source == _SOURCE_LAUSUNTOPYYNNOT:
+        return [(_SOURCE_LAUSUNTOPYYNNOT, "Lausuntopyynnöt")]
+    if source == _SOURCE_VALIOKUNTA:
+        return [(_SOURCE_VALIOKUNTA, "Valiokunta")]
+    if source == "both":
+        return [
+            (_SOURCE_LAUSUNTOPYYNNOT, "Lausuntopyynnöt"),
+            (_SOURCE_VALIOKUNTA, "Valiokunta"),
+        ]
+    raise ValueError(f"Unknown review source: {source!r}")
+
+
+def cmd_review_logged(days: int = 7, source: str = _SOURCE_LAUSUNTOPYYNNOT) -> None:
+    total = 0
+    sections: list[tuple[str, list[dict]]] = []
+    for source_key, label in _review_sources(source):
+        entries = _read_borderline_entries(days, source=source_key)
+        total += len(entries)
+        sections.append((label, entries))
+    if total == 0:
         print(f"No borderline items in the last {days} days.")
         return
+
     print(
-        f"--- LOGGED ({len(entries)} items, score {config.LOG_THRESHOLD}-{config.NOTIFY_THRESHOLD - 1}) ---\n"
+        f"--- LOGGED ({total} items, score {config.LOG_THRESHOLD}-{config.NOTIFY_THRESHOLD - 1}) ---\n"
     )
-    for entry in entries:
-        print(f"[{entry['score']}/10] {entry['timestamp'][:10]}  {entry['title']}")
-        print(f"  {entry.get('rationale', '')}")
-        print()
+    for label, entries in sections:
+        if not entries:
+            continue
+        if len(sections) > 1:
+            print(f"{label}:")
+        for entry in entries:
+            print(f"[{entry['score']}/10] {entry['timestamp'][:10]}  {entry['title']}")
+            print(f"  {entry.get('rationale', '')}")
+            print()
 
 
 def _load_flagged() -> list[dict]:
@@ -364,7 +686,7 @@ def _load_flagged() -> list[dict]:
 def _load_borderline(days: int = 7) -> list[dict]:
     """Return borderline items from the score log within the last `days` days."""
     items = []
-    for entry in _read_borderline_entries(days):
+    for entry in _read_borderline_entries(days, source=_SOURCE_LAUSUNTOPYYNNOT):
         proposal = _build_proposal(entry, skip_expired=False)
         if proposal is None:
             continue
@@ -380,11 +702,11 @@ def _load_borderline(days: int = 7) -> list[dict]:
 
 
 def cmd_preview_digest(days: int = 7) -> None:
-    """Print the current digest (flagged + recent borderline) as plain text."""
+    """Print the current lausuntopyyntö digest as plain text."""
     flagged = _load_flagged()
     borderline = _load_borderline(days=days)
     if not flagged and not borderline:
-        print("Nothing to preview: no flagged items and no borderline items in the score log.")
+        print("Nothing to preview: no flagged lausuntopyyntö items and no borderline items.")
         return
     subject, _html_body, text_body = build_daily_digest(flagged, borderline)
     print(f"Subject: {subject}\n")
@@ -392,17 +714,19 @@ def cmd_preview_digest(days: int = 7) -> None:
 
 
 def cmd_resend_digest(dry_run: bool, days: int = 7) -> None:
-    """Resend the digest (flagged + recent borderline) without re-running scoring."""
+    """Resend the lausuntopyyntö digest without re-running scoring."""
     flagged = _load_flagged()
     borderline = _load_borderline(days=days)
     if not flagged and not borderline:
-        print("Nothing to send: no flagged items and no borderline items in the score log.")
+        print("Nothing to send: no flagged lausuntopyyntö items and no borderline items.")
         return
     _deliver_digest(flagged, dry_run, borderline=borderline)
 
 
 def cmd_reset_state() -> None:
-    print("This will erase all state: seen proposals, score log, and flagged items.")
+    print(
+        "This will erase all state: seen proposals, seen documents, score logs, and flagged items."
+    )
     answer = input("Continue? [y/N] ").strip().lower()
     if answer != "y":
         print("Aborted.")
@@ -410,24 +734,25 @@ def cmd_reset_state() -> None:
     _save_json(config.SEEN_PROPOSALS_PATH, {})
     _save_json(config.SEEN_DOCUMENTS_PATH, {})
     config.FLAGGED_PATH.write_text("[]", encoding="utf-8")
-    config.SCORE_LOG_PATH.write_text("", encoding="utf-8")
+    config.LAUSUNTOPALVELU_SCORE_LOG_PATH.write_text("", encoding="utf-8")
+    config.VALIOKUNTA_SCORE_LOG_PATH.write_text("", encoding="utf-8")
+    config.SCORE_LOG_SPLIT_MIGRATION_MARKER.write_text(
+        datetime.now(UTC).isoformat(),
+        encoding="utf-8",
+    )
     print("State reset.")
 
 
-def _run_daily(dry_run: bool) -> None:
-    cmd_daily(dry_run=dry_run)
+def _run_lausuntopyynnot(dry_run: bool) -> None:
+    cmd_lausuntopyynnot(dry_run=dry_run)
 
 
-def _run_weekly(dry_run: bool) -> None:
-    cmd_weekly(dry_run=dry_run)
+def _run_valiokunta(dry_run: bool) -> None:
+    cmd_valiokunta(dry_run=dry_run)
 
 
-def _run_midweek(dry_run: bool) -> None:
-    cmd_midweek(dry_run=dry_run)
-
-
-def _run_review(days: int) -> None:
-    cmd_review_logged(days=days)
+def _run_review(days: int, source: str) -> None:
+    cmd_review_logged(days=days, source=source)
 
 
 def _run_preview(days: int | None = None) -> None:
@@ -447,10 +772,9 @@ def _run_resend(dry_run: bool, days: int | None = None) -> None:
 def _dispatch_cli(args: argparse.Namespace) -> None:
     actions: list[tuple[str, Callable[[], None]]] = [
         ("update_context", cmd_update_context),
-        ("daily", lambda: _run_daily(args.dry_run)),
-        ("weekly", lambda: _run_weekly(args.dry_run)),
-        ("midweek", lambda: _run_midweek(args.dry_run)),
-        ("review_logged", lambda: _run_review(args.days)),
+        ("lausuntopyynnot", lambda: _run_lausuntopyynnot(args.dry_run)),
+        ("valiokunta", lambda: _run_valiokunta(args.dry_run)),
+        ("review_logged", lambda: _run_review(args.days, args.source)),
         ("preview_digest", lambda: _run_preview(args.days)),
         ("resend_digest", lambda: _run_resend(args.dry_run, args.days)),
         ("reset_state", cmd_reset_state),
@@ -477,65 +801,57 @@ def _menu_items() -> list[_MenuItem]:
     return [
         {
             "key": "1",
-            "label": "Daily check",
+            "label": "Lausuntopyyntö check",
             "description": [
                 "Fetch new lausuntopalvelu proposals, score with Claude,",
-                "and send email digest (flagged + borderline).",
+                "and optionally send an email digest.",
             ],
-            "action": lambda: _run_daily(dry_run=False),
+            "action": _menu_lausuntopyynnot,
         },
         {
             "key": "2",
-            "label": "Daily check (dry run)",
-            "description": ["Same as above but print the digest instead of sending."],
-            "action": lambda: _run_daily(dry_run=True),
+            "label": "Valiokunta check",
+            "description": [
+                "Fetch new committee agendas, score scheduled matters,",
+                "and optionally send the valiokunta digest.",
+            ],
+            "action": _menu_valiokunta,
         },
         {
             "key": "3",
-            "label": "Update Kuluttajaliitto context",
-            "description": [
-                "Re-fetch Kuluttajaliitto published statements used as",
-                "scoring context. Run this before the first daily check",
-                "and periodically to keep context current.",
-            ],
-            "action": cmd_update_context,
+            "label": "Review borderline items",
+            "description": ["Choose source and days to review; default range is 7 days."],
+            "action": _menu_review_logged,
         },
         {
             "key": "4",
-            "label": "Review borderline items (7 days)",
+            "label": "Preview lausuntopyyntö digest",
             "description": [
-                "Print borderline items (score 4-5) from the last 7 days",
-                "as a raw list for manual calibration review.",
-            ],
-            "action": lambda: _run_review(days=7),
-        },
-        {
-            "key": "5",
-            "label": "Review borderline items (custom range)",
-            "description": ["Same as above with a custom day range."],
-            "action": _menu_review_custom,
-        },
-        {
-            "key": "6",
-            "label": "Preview digest",
-            "description": [
-                "Print the current digest (flagged items + borderline",
-                "from the last 7 days) as plain text. No email sent.",
+                "Print the current lausuntopyyntö digest (flagged items +",
+                "recent borderline) as plain text. No email sent.",
             ],
             "action": _run_preview,
         },
         {
-            "key": "7",
-            "label": "Resend digest",
+            "key": "5",
+            "label": "Resend lausuntopyyntö digest",
             "description": [
-                "Send the digest email (flagged + borderline from the",
-                "last 7 days) without re-running scoring. Useful for",
-                "testing email delivery or resending after a failure.",
+                "Send the lausuntopyyntö digest email without re-running",
+                "scoring. Useful for testing delivery or resending.",
             ],
             "action": lambda: _run_resend(dry_run=False),
         },
         {
-            "key": "8",
+            "key": "6",
+            "label": "Update Kuluttajaliitto context",
+            "description": [
+                "Re-fetch Kuluttajaliitto published statements used as",
+                "scoring context. Checks refresh stale context automatically.",
+            ],
+            "action": cmd_update_context,
+        },
+        {
+            "key": "r",
             "label": "Reset state",
             "description": [
                 "Erase all state files (seen proposals, score log,",
@@ -580,12 +896,50 @@ def _format_help(items: list[_MenuItem]) -> str:
     return "\n".join(lines)
 
 
-def _menu_review_custom() -> None:
-    raw = input("Days to look back: ").strip()
+def _prompt_send_digest() -> bool:
+    raw = input("Send email digest if items are found? [Y/n] ").strip().lower()
+    return raw in ("", "y")
+
+
+def _menu_lausuntopyynnot() -> None:
+    _run_lausuntopyynnot(dry_run=not _prompt_send_digest())
+
+
+def _menu_valiokunta() -> None:
+    _run_valiokunta(dry_run=not _prompt_send_digest())
+
+
+def _prompt_review_source() -> str:
+    raw = input("Source ([l]ausuntopyynnöt / [v]aliokunta / [b]oth, default l): ").strip().lower()
+    if raw in ("", "l", "lausuntopyynnot", "lausuntopyynnöt"):
+        return _SOURCE_LAUSUNTOPYYNNOT
+    if raw in ("v", "valiokunta"):
+        return _SOURCE_VALIOKUNTA
+    if raw in ("b", "both", "molemmat"):
+        return "both"
+    print(f"Invalid source: {raw!r}")
+    return ""
+
+
+def _prompt_review_days() -> int | None:
+    raw = input("Days to look back (default 7): ").strip()
+    if not raw:
+        return 7
     try:
-        _run_review(days=int(raw))
+        return int(raw)
     except ValueError:
         print(f"Invalid number: {raw!r}")
+        return None
+
+
+def _menu_review_logged() -> None:
+    source = _prompt_review_source()
+    if not source:
+        return
+    days = _prompt_review_days()
+    if days is None:
+        return
+    _run_review(days=days, source=source)
 
 
 def cmd_interactive() -> None:
@@ -621,12 +975,15 @@ def cmd_interactive() -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Lausuntobotti – Kuluttajaliitto monitoring tool")
-    parser.add_argument("--daily", action="store_true", help="Run daily lausuntopalvelu check")
     parser.add_argument(
-        "--weekly", action="store_true", help="Run weekly committee digest (Fridays)"
+        "--lausuntopyynnot",
+        action="store_true",
+        help="Run lausuntopyyntö check",
     )
     parser.add_argument(
-        "--midweek", action="store_true", help="Run mid-week committee update check"
+        "--valiokunta",
+        action="store_true",
+        help="Run valiokunta agenda check",
     )
     parser.add_argument(
         "--update-context",
@@ -644,20 +1001,26 @@ def main() -> None:
         help="Print borderline (score 4-5) items as a raw list for calibration review",
     )
     parser.add_argument(
+        "--source",
+        choices=(_SOURCE_LAUSUNTOPYYNNOT, _SOURCE_VALIOKUNTA, "both"),
+        default=_SOURCE_LAUSUNTOPYYNNOT,
+        help="Score log source for --review-logged (default: lausuntopyynnot)",
+    )
+    parser.add_argument(
         "--days",
         type=int,
         default=7,
-        help="Days to look back for --review-logged and --preview-digest / --resend-digest (default: 7)",
+        help="Days to look back for --review-logged and lausuntopyyntö digest preview/resend (default: 7)",
     )
     parser.add_argument(
         "--preview-digest",
         action="store_true",
-        help="Print current digest (flagged + recent borderline) as plain text, no email",
+        help="Print current lausuntopyyntö digest as plain text, no email",
     )
     parser.add_argument(
         "--resend-digest",
         action="store_true",
-        help="Send digest email (flagged + recent borderline) without re-running scoring",
+        help="Send lausuntopyyntö digest email without re-running scoring",
     )
     parser.add_argument(
         "--reset-state",
@@ -673,9 +1036,8 @@ def main() -> None:
 
     if not any(
         [
-            args.daily,
-            args.weekly,
-            args.midweek,
+            args.lausuntopyynnot,
+            args.valiokunta,
             args.update_context,
             args.review_logged,
             args.preview_digest,

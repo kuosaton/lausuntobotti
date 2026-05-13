@@ -11,9 +11,10 @@ from typing import Literal, cast
 NOTIFY_THRESHOLD = 6  # score >= 6 → email
 LOG_THRESHOLD = 4  # score 4-5 → log only; score 0-3 → drop
 
-# How many proposals to fetch per daily run (sorted newest-first).
+# How many proposals to fetch per lausuntopyyntö run (sorted newest-first).
 # High enough to cover the full backlog on first run; deduplication handles the rest.
 LAUSUNTOPALVELU_FETCH_TOP = 200
+CONTEXT_MAX_AGE_DAYS = 7
 
 # Paths
 ROOT = Path(__file__).parent
@@ -23,7 +24,10 @@ STATE_DIR.mkdir(exist_ok=True)
 CONTEXT_DIR.mkdir(exist_ok=True)
 SEEN_PROPOSALS_PATH = STATE_DIR / "seen_proposals.json"
 SEEN_DOCUMENTS_PATH = STATE_DIR / "seen_documents.json"
-SCORE_LOG_PATH = STATE_DIR / "score_log.jsonl"
+LAUSUNTOPALVELU_SCORE_LOG_PATH = STATE_DIR / "score_log.jsonl"
+VALIOKUNTA_SCORE_LOG_PATH = STATE_DIR / "valiokunta_score_log.jsonl"
+SCORE_LOG_PATH = LAUSUNTOPALVELU_SCORE_LOG_PATH
+SCORE_LOG_SPLIT_MIGRATION_MARKER = STATE_DIR / ".score_log_split_migrated"
 FLAGGED_PATH = STATE_DIR / "nostetut.json"
 CONTEXT_PATH = CONTEXT_DIR / "kuluttajaliitto.json"
 SCORING_CONFIG_PATH = ROOT / "model_config.toml"

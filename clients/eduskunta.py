@@ -1,21 +1,127 @@
-"""
-Committee (valiokunta) monitoring client – version 0.3.0
+from __future__ import annotations
 
-Pipeline (to be implemented):
-  1. GET committee main page HTML (~3 MB, server-rendered SPA)
-  2. Regex-extract VS (viikkosuunnitelma) and TaVE/MmVE/YmVE (esityslista) items
-     from the embedded JavaScript object literals (not valid JSON – keys unquoted)
-  3. For each new esityslista: fetch full XML from VaskiData by exact Eduskuntatunnus
-  4. Parse matter references (HE/LA/etc.) and titles from XmlData column
-  5. Score each matter via llm_scorer
+import re
+import xml.etree.ElementTree as ET
+from dataclasses import dataclass
 
-Key facts verified 2026-04-22:
-- Embedded JS field names: edktunnus, eduskuntatunnus, asiakirjatyyppikoodi,
-  nimeketeksti, laadintapvm, viimeisinJulkaisuajankohta
-- Document type codes: VS, KS, TaVE/MmVE/YmVE, TaVP/MmVP/YmVP, TaVM/MmVM/YmVM
-- VaskiData column is "Eduskuntatunnus" (not "Pitkätunnus")
-- VaskiData requires exact full document code, e.g. "TaVE 37/2026 vp"
-- VaskiData base URL: https://avoindata.eduskunta.fi/api/v1
-"""
+import httpx
 
-raise NotImplementedError("Committee client is planned for version 0.3.0")
+VASKI_URL = "https://avoindata.eduskunta.fi/api/v1/tables/VaskiData/rows"
+
+HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; lausuntobotti/1.0)"}
+
+NS = {
+    "vaski": "http://www.eduskunta.fi/skeemat/vaskikooste/2011/01/04",
+    "meta": "http://www.vn.fi/skeemat/metatietoelementit/2010/04/27",
+}
+
+ITEM_RE = re.compile(
+    r'\{edktunnus:"(?P<edktunnus>[^"]+)"'
+    r',eduskuntatunnus:(?:null|"(?P<eduskuntatunnus>[^"]*)")'
+    r',asiakirjatyyppinimi:"(?P<tyyppinimi>[^"]+)"'
+    r',asiakirjatyyppikoodi:"(?P<tyyppikoodi>[^"]+)"'
+    r'.*?nimeketeksti:"(?P<nimeke>[^"]+)"'
+    r'.*?laadintapvm:"(?P<pvm>[^"]+)"'
+    r'.*?viimeisinJulkaisuajankohta:"(?P<julkaistu>[^"]+)"',
+    re.DOTALL,
+)
+
+
+@dataclass(frozen=True)
+class Document:
+    """A document item embedded on a committee page."""
+
+    edktunnus: str
+    eduskuntatunnus: str | None
+    tyyppikoodi: str
+    nimeke: str
+    laadintapvm: str
+    julkaistu: str
+
+
+@dataclass(frozen=True)
+class Matter:
+    """A single matter scheduled on a committee agenda."""
+
+    eduskuntatunnus: str
+    title: str
+    type: str
+
+
+def fetch_committee_page(client: httpx.Client, url: str) -> str:
+    response = client.get(url, headers=HEADERS, timeout=30)
+    response.raise_for_status()
+    return response.text
+
+
+def extract_documents(html: str) -> list[Document]:
+    """Extract VS, KS, esityslista, and pöytäkirja items from a committee page."""
+    return [
+        Document(
+            edktunnus=match.group("edktunnus"),
+            eduskuntatunnus=match.group("eduskuntatunnus"),
+            tyyppikoodi=match.group("tyyppikoodi"),
+            nimeke=match.group("nimeke"),
+            laadintapvm=match.group("pvm"),
+            julkaistu=match.group("julkaistu"),
+        )
+        for match in ITEM_RE.finditer(html)
+    ]
+
+
+def fetch_agenda_xml(client: httpx.Client, eduskuntatunnus: str) -> str:
+    """Fetch the latest VaskiData XML for an agenda by its parliamentary code."""
+    response = client.get(
+        VASKI_URL,
+        params={
+            "columnName": "Eduskuntatunnus",
+            "columnValue": eduskuntatunnus,
+            "page": "0",
+            "perPage": "10",
+        },
+        headers=HEADERS,
+        timeout=30,
+    )
+    response.raise_for_status()
+    data = response.json()
+    rows = data.get("rowData") or []
+    if not rows:
+        raise LookupError(f"No VaskiData rows for {eduskuntatunnus!r}")
+
+    columns = data["columnNames"]
+
+    def _row_dict(row: list[object]) -> dict[str, object]:
+        return dict(zip(columns, row, strict=True))
+
+    def _created(row: dict[str, object]) -> str:
+        value = row.get("Created")
+        return value if isinstance(value, str) else ""
+
+    latest = max((_row_dict(row) for row in rows), key=_created)
+    xml_data = latest.get("XmlData")
+    if not isinstance(xml_data, str):
+        raise LookupError(f"No XmlData in VaskiData row for {eduskuntatunnus!r}")
+    return xml_data
+
+
+def parse_agenda_matters(xml: str) -> list[Matter]:
+    """Extract actual scheduled matters from an esityslista XML."""
+    root = ET.fromstring(xml)
+    matters = []
+    for item in root.iter(f"{{{NS['vaski']}}}Asiakohta"):
+        tunnus = item.findtext("vaski:KohtaAsia/meta:EduskuntaTunnus", namespaces=NS)
+        if not tunnus:
+            continue
+        title = item.findtext("vaski:KohtaNimeke/meta:NimekeTeksti", namespaces=NS) or ""
+        type_name = item.findtext(
+            "vaski:KohtaAsia/meta:AsiakirjatyyppiNimi",
+            namespaces=NS,
+        )
+        matters.append(
+            Matter(
+                eduskuntatunnus=tunnus.strip(),
+                title=title.strip(),
+                type=(type_name or "").strip(),
+            )
+        )
+    return matters
