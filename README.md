@@ -120,12 +120,11 @@ Lausuntobotti
 1  Daily check
 2  Daily check (dry run)
 3  Update Kuluttajaliitto context
-4  Review logged items (7 days)
-5  Review logged items (custom range)
-6  Preview flagged
-7  Preview logged (borderline)
-8  Send flagged (resend last digest)
-9  Reset state
+4  Review borderline items (7 days)
+5  Review borderline items (custom range)
+6  Preview digest
+7  Resend digest
+8  Reset state
 h  Help
 0  Exit
 ─────────────────────────────────────

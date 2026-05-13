@@ -151,9 +151,10 @@ def _deliver_digest(
     flagged: list[dict], dry_run: bool, borderline: list[dict] | None = None
 ) -> None:
     borderline = borderline or []
-    print(f"\n{len(flagged)} item(s) above threshold:")
-    for item in sorted(flagged, key=lambda x: -x["score"]):
-        print(f"  [{item['score']}/10] {item['proposal'].title}")
+    if flagged:
+        print(f"\n{len(flagged)} item(s) above threshold:")
+        for item in sorted(flagged, key=lambda x: -x["score"]):
+            print(f"  [{item['score']}/10] {item['proposal'].title}")
     if borderline:
         print(f"\n{len(borderline)} borderline item(s) (score 4-5):")
         for item in sorted(borderline, key=lambda x: -x["score"]):
@@ -280,14 +281,12 @@ def cmd_midweek(dry_run: bool) -> None:  # pylint: disable=unused-argument
     sys.exit(1)
 
 
-def cmd_review_logged(days: int = 7) -> None:
+def _read_borderline_entries(days: int = 7) -> list[dict]:
+    """Return raw score-log dicts for borderline items within the last `days` days."""
     if not config.SCORE_LOG_PATH.exists():
-        print("No score log found.")
-        return
-
+        return []
     cutoff = datetime.now(UTC).timestamp() - days * 86400
-    borderline = []
-
+    entries = []
     with config.SCORE_LOG_PATH.open(encoding="utf-8") as f:
         for line in f:
             stripped = line.strip()
@@ -302,16 +301,19 @@ def cmd_review_logged(days: int = 7) -> None:
             if ts.timestamp() < cutoff:
                 continue
             if config.LOG_THRESHOLD <= score < config.NOTIFY_THRESHOLD:
-                borderline.append(entry)
+                entries.append(entry)
+    return entries
 
-    if not borderline:
+
+def cmd_review_logged(days: int = 7) -> None:
+    entries = _read_borderline_entries(days)
+    if not entries:
         print(f"No borderline items in the last {days} days.")
         return
-
     print(
-        f"--- LOGGED ({len(borderline)} items, score {config.LOG_THRESHOLD}-{config.NOTIFY_THRESHOLD - 1}) ---\n"
+        f"--- LOGGED ({len(entries)} items, score {config.LOG_THRESHOLD}-{config.NOTIFY_THRESHOLD - 1}) ---\n"
     )
-    for entry in borderline:
+    for entry in entries:
         print(f"[{entry['score']}/10] {entry['timestamp'][:10]}  {entry['title']}")
         print(f"  {entry.get('rationale', '')}")
         print()
@@ -359,52 +361,36 @@ def _load_flagged() -> list[dict]:
 
 def _load_borderline(days: int = 7) -> list[dict]:
     """Return borderline items from the score log within the last `days` days."""
-    if not config.SCORE_LOG_PATH.exists():
-        return []
-    cutoff = datetime.now(UTC).timestamp() - days * 86400
     items = []
-    with config.SCORE_LOG_PATH.open(encoding="utf-8") as f:
-        for line in f:
-            stripped = line.strip()
-            if not stripped:
-                continue
+    for entry in _read_borderline_entries(days):
+        published_on = None
+        if entry.get("published_on"):
             try:
-                entry = json.loads(stripped)
-            except json.JSONDecodeError:
-                continue
-            score = entry.get("score", 0)
-            ts = datetime.fromisoformat(entry["timestamp"].rstrip("Z")).replace(tzinfo=UTC)
-            if ts.timestamp() < cutoff:
-                continue
-            if config.LOG_THRESHOLD <= score < config.NOTIFY_THRESHOLD:
-                published_on = None
-                if entry.get("published_on"):
-                    try:
-                        published_on = datetime.fromisoformat(entry["published_on"])
-                    except ValueError:
-                        pass
-                deadline = None
-                if entry.get("deadline"):
-                    try:
-                        d = date_type.fromisoformat(entry["deadline"])
-                        deadline = datetime(d.year, d.month, d.day)
-                    except ValueError:
-                        pass
-                proposal = SimpleNamespace(
-                    title=entry.get("title", ""),
-                    organization_name=entry.get("organization") or "-",
-                    deadline=deadline,
-                    published_on=published_on,
-                    url=entry.get("url", ""),
-                )
-                items.append(
-                    {
-                        "proposal": proposal,
-                        "score": score,
-                        "rationale": entry.get("rationale", ""),
-                        "themes": entry.get("themes", []),
-                    }
-                )
+                published_on = datetime.fromisoformat(entry["published_on"])
+            except ValueError:
+                pass
+        deadline = None
+        if entry.get("deadline"):
+            try:
+                d = date_type.fromisoformat(entry["deadline"])
+                deadline = datetime(d.year, d.month, d.day)
+            except ValueError:
+                pass
+        proposal = SimpleNamespace(
+            title=entry.get("title", ""),
+            organization_name=entry.get("organization") or "-",
+            deadline=deadline,
+            published_on=published_on,
+            url=entry.get("url", ""),
+        )
+        items.append(
+            {
+                "proposal": proposal,
+                "score": entry.get("score", 0),
+                "rationale": entry.get("rationale", ""),
+                "themes": entry.get("themes", []),
+            }
+        )
     return items
 
 

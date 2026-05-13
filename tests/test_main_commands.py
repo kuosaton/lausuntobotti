@@ -374,13 +374,13 @@ def test_deliver_digest_aborts_when_send_declined(monkeypatch, capsys) -> None:
     assert not sent["called"]
 
 
-def test_cmd_review_logged_no_log_file(state_paths, monkeypatch, capsys) -> None:
+def test_cmd_review_logged_no_log_file(state_paths, capsys) -> None:
 
     state_paths.score_log.unlink()
 
     main.cmd_review_logged(days=7)
     out = capsys.readouterr().out
-    assert "No score log found." in out
+    assert "No borderline items" in out
 
 
 def test_cmd_review_logged_only_flagged_in_log_reports_empty(
