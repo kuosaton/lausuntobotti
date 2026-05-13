@@ -5,9 +5,10 @@ import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from datetime import datetime
-from html import unescape
 
 import httpx
+
+from utils.text import strip_html
 
 BASE_URL = "https://www.lausuntopalvelu.fi/api/v1/Lausuntopalvelu.svc"
 PROPOSAL_URL = "https://www.lausuntopalvelu.fi/FI/Proposal/Participation?proposalId={id}"
@@ -29,12 +30,6 @@ class Proposal:
     deadline: datetime | None
     published_on: datetime
     url: str
-
-
-def strip_html(s: str | None) -> str:
-    if not s:
-        return ""
-    return unescape(re.sub(r"<[^>]+>", " ", s)).strip()
 
 
 def _parse_dt(s: str | None) -> datetime | None:

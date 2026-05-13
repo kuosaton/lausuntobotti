@@ -3,11 +3,12 @@ from __future__ import annotations
 import httpx
 
 import clients.kuluttajaliitto as kk
+from utils.text import strip_html
 
 
 def test_strip_handles_html_and_none() -> None:
-    assert kk._strip(None) == ""
-    assert kk._strip("<p>Hei &amp; moi</p>") == "Hei & moi"
+    assert strip_html(None) == ""
+    assert strip_html("<p>Hei &amp; moi</p>") == "Hei & moi"
 
 
 def test_fetch_statements_parses_wp_response() -> None:
