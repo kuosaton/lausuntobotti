@@ -192,7 +192,7 @@ def test_cmd_update_context_fetches_and_saves(monkeypatch) -> None:
     assert captured["ctx"] == {"recent_statements": [{"title": "T"}]}
 
 
-def test_cmd_update_context_skips_save_when_unchanged(monkeypatch, capsys) -> None:
+def test_cmd_update_context_refreshes_timestamp_when_unchanged(monkeypatch, capsys) -> None:
     statements = [{"title": "T", "date": "2026-04-22", "excerpt": "E", "url": "u", "tags": []}]
 
     class FakeClient:
@@ -211,12 +211,12 @@ def test_cmd_update_context_skips_save_when_unchanged(monkeypatch, capsys) -> No
         lambda: {"last_updated": "2026-04-22", "recent_statements": statements},
     )
 
-    saved = {"called": False}
-    monkeypatch.setattr(main, "_save_context", lambda ctx: saved.__setitem__("called", True))
+    saved = {"ctx": None}
+    monkeypatch.setattr(main, "_save_context", lambda ctx: saved.__setitem__("ctx", ctx))
 
     main.cmd_update_context()
 
-    assert not saved["called"]
+    assert saved["ctx"] == {"recent_statements": statements}
     assert "already up to date" in capsys.readouterr().out
 
 
@@ -475,6 +475,96 @@ def test_cmd_preview_digest_filters_score_thresholds(state_paths, capsys) -> Non
     assert "Rajalla" in out
     assert "Nostettu" not in out
     assert "Liian alhainen" not in out
+
+
+def test_cmd_preview_digest_filters_out_committee_borderline_entries(state_paths, capsys) -> None:
+    now = datetime.now(main.UTC).isoformat()
+    entries = [
+        {
+            "timestamp": now,
+            "source": "lausuntopalvelu",
+            "title": "Lausuntopalvelun rajatapaus",
+            "score": 5,
+            "rationale": "R",
+            "themes": [],
+        },
+        {
+            "timestamp": now,
+            "source": "talousvaliokunta",
+            "title": "Valiokunnan rajatapaus",
+            "score": 5,
+            "rationale": "R",
+            "themes": [],
+        },
+    ]
+    state_paths.score_log.write_text(
+        "\n".join(json.dumps(e, ensure_ascii=False) for e in entries) + "\n",
+        encoding="utf-8",
+    )
+
+    main.cmd_preview_digest(days=7)
+    out = capsys.readouterr().out
+
+    assert "Lausuntopalvelun rajatapaus" in out
+    assert "Valiokunnan rajatapaus" not in out
+
+
+def test_cmd_review_logged_can_show_valiokunta_entries(state_paths, capsys) -> None:
+    now = datetime.now(main.UTC).isoformat()
+    state_paths.valiokunta_score_log.write_text(
+        json.dumps(
+            {
+                "timestamp": now,
+                "source": "talousvaliokunta",
+                "title": "Valiokunnan rajatapaus",
+                "score": 5,
+                "rationale": "R",
+                "themes": [],
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    main.cmd_review_logged(days=7, source="valiokunta")
+    out = capsys.readouterr().out
+
+    assert "Valiokunnan rajatapaus" in out
+
+
+def test_cmd_review_logged_can_show_both_sources_grouped(state_paths, capsys) -> None:
+    now = datetime.now(main.UTC).isoformat()
+    state_paths.score_log.write_text(
+        json.dumps(
+            {"timestamp": now, "title": "Lausuntopyyntö", "score": 5, "rationale": "R"},
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    state_paths.valiokunta_score_log.write_text(
+        json.dumps(
+            {
+                "timestamp": now,
+                "source": "talousvaliokunta",
+                "title": "Valiokunta-asia",
+                "score": 5,
+                "rationale": "R",
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    main.cmd_review_logged(days=7, source="both")
+    out = capsys.readouterr().out
+
+    assert "Lausuntopyynnöt:" in out
+    assert "Valiokunta:" in out
+    assert "Lausuntopyyntö" in out
+    assert "Valiokunta-asia" in out
 
 
 def test_load_borderline_invalid_dates_normalize_to_none(state_paths) -> None:

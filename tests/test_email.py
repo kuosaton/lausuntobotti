@@ -227,3 +227,34 @@ def test_build_weekly_digest_handles_empty_and_linked_items() -> None:
     assert "Ei nostettavia asioita." in text_body
     assert "Arvioitu yhteensä: 9 asiaa" in text_body
     assert "https://example.invalid/doc/1" in html_body
+
+
+def test_build_weekly_digest_renders_borderline_items() -> None:
+    committee_items = {"talousvaliokunta": []}
+    borderline_items = {
+        "talousvaliokunta": [
+            {
+                "eduskuntatunnus": "HE 2/2026 vp",
+                "title": "Rajatapaus",
+                "score": 5,
+                "rationale": "Välillinen kuluttajavaikutus.",
+                "themes": ["energia"],
+                "url": "",
+            }
+        ]
+    }
+
+    _subject, html_body, text_body = email_mod.build_weekly_digest(
+        committee_items=committee_items,
+        week_number=17,
+        total_scored=1,
+        total_logged=1,
+        borderline_items=borderline_items,
+    )
+
+    assert "Rajatapauksia" in text_body
+    assert "[5/10] Rajatapaus" in text_body
+    assert "HE 2/2026 vp" in text_body
+    assert "Ei nostettavia asioita." not in text_body
+    assert "Rajatapaus" in html_body
+    assert "energia" in html_body
