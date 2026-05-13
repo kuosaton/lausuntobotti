@@ -2,13 +2,30 @@ from __future__ import annotations
 
 import json
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from processing import llm_scorer
+
+
+def _scoring_config(
+    *,
+    model: str = "claude-haiku-4-5",
+    max_tokens: int = 300,
+    timeout_seconds: float = 45.0,
+    prompt_cache: bool = True,
+    cache_ttl: Literal["5m", "1h"] = "5m",
+) -> llm_scorer.ScoringConfig:
+    return llm_scorer.ScoringConfig(
+        model=model,
+        max_tokens=max_tokens,
+        timeout_seconds=timeout_seconds,
+        prompt_cache=prompt_cache,
+        cache_ttl=cache_ttl,
+    )
 
 
 def test_format_statements_includes_excerpt_when_present() -> None:
@@ -61,6 +78,79 @@ def test_score_item_ignores_jakelu_signal(monkeypatch) -> None:
     assert "Lisäsignaali" not in item_text
     assert "Kuluttajaliitto ry" not in item_text
     assert result["score"] == 6
+
+
+def test_score_item_uses_configured_model_parameters(monkeypatch) -> None:
+    captured: dict = {}
+
+    def fake_create(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(content=[SimpleNamespace(text='{"score": 6, "rationale": "ok"}')])
+
+    fake_client = SimpleNamespace(messages=SimpleNamespace(create=fake_create))
+    monkeypatch.setattr(llm_scorer, "_get_client", lambda: fake_client)
+    monkeypatch.setattr(
+        llm_scorer,
+        "load_scoring_config",
+        lambda: _scoring_config(
+            model="claude-sonnet-4-6",
+            max_tokens=500,
+            timeout_seconds=60.0,
+        ),
+    )
+
+    llm_scorer.score_item("A", "B", "src", {"recent_statements": []})
+
+    assert captured["model"] == "claude-sonnet-4-6"
+    assert captured["max_tokens"] == 500
+    assert captured["timeout"] == 60.0
+
+
+def test_score_item_adds_cache_controls_when_enabled(monkeypatch) -> None:
+    captured: dict = {}
+
+    def fake_create(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(content=[SimpleNamespace(text='{"score": 6, "rationale": "ok"}')])
+
+    fake_client = SimpleNamespace(messages=SimpleNamespace(create=fake_create))
+    monkeypatch.setattr(llm_scorer, "_get_client", lambda: fake_client)
+    monkeypatch.setattr(
+        llm_scorer,
+        "load_scoring_config",
+        lambda: _scoring_config(cache_ttl="1h"),
+    )
+
+    llm_scorer.score_item("A", "B", "src", {"recent_statements": []})
+
+    assert captured["system"][0]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
+    assert captured["messages"][0]["content"][0]["cache_control"] == {
+        "type": "ephemeral",
+        "ttl": "1h",
+    }
+    assert "cache_control" not in captured["messages"][0]["content"][1]
+
+
+def test_score_item_omits_cache_controls_when_disabled(monkeypatch) -> None:
+    captured: dict = {}
+
+    def fake_create(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(content=[SimpleNamespace(text='{"score": 6, "rationale": "ok"}')])
+
+    fake_client = SimpleNamespace(messages=SimpleNamespace(create=fake_create))
+    monkeypatch.setattr(llm_scorer, "_get_client", lambda: fake_client)
+    monkeypatch.setattr(
+        llm_scorer,
+        "load_scoring_config",
+        lambda: _scoring_config(prompt_cache=False),
+    )
+
+    llm_scorer.score_item("A", "B", "src", {"recent_statements": []})
+
+    assert "cache_control" not in captured["system"][0]
+    assert "cache_control" not in captured["messages"][0]["content"][0]
+    assert "cache_control" not in captured["messages"][0]["content"][1]
 
 
 def test_score_item_parses_json_inside_markdown_fence(monkeypatch) -> None:

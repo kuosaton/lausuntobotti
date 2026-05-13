@@ -6,6 +6,9 @@ import re
 from typing import Any, TypedDict, cast
 
 import anthropic
+from anthropic.types import CacheControlEphemeralParam, MessageParam, TextBlockParam
+
+from config import ScoringConfig, load_scoring_config
 
 
 @functools.lru_cache(maxsize=1)
@@ -106,6 +109,23 @@ def _parse_response_json(raw_text: str) -> dict[str, Any]:
     raise ValueError(f"Model response was not valid JSON object: {preview!r}")
 
 
+def _cache_control(scoring_config: ScoringConfig) -> CacheControlEphemeralParam | None:
+    if not scoring_config.prompt_cache:
+        return None
+    cache_control = CacheControlEphemeralParam(type="ephemeral")
+    if scoring_config.cache_ttl == "1h":
+        cache_control["ttl"] = "1h"
+    return cache_control
+
+
+def _cached_text_block(text: str, scoring_config: ScoringConfig) -> TextBlockParam:
+    block = TextBlockParam(type="text", text=text)
+    cache_control = _cache_control(scoring_config)
+    if cache_control is not None:
+        block["cache_control"] = cache_control
+    return block
+
+
 def score_item(
     title: str,
     abstract: str,
@@ -121,38 +141,27 @@ def score_item(
     The system prompt and context block are marked for prompt caching — they stay
     identical across all calls in one run, so subsequent calls hit the cache.
     """
+    scoring_config = load_scoring_config()
     context_text = _format_statements(context.get("recent_statements", []))
     item_text = (
         f"## Arvioitava asia\n\n**Lähde:** {source}\n**Otsikko:** {title}\n**Kuvaus:** {abstract}"
     )
+    system_blocks = [_cached_text_block(SYSTEM_PROMPT, scoring_config)]
+    message_content = [
+        _cached_text_block(
+            f"## Kuluttajaliiton viimeaikaiset lausunnot\n\n{context_text}",
+            scoring_config,
+        ),
+        TextBlockParam(type="text", text=item_text),
+    ]
+    messages = [MessageParam(role="user", content=message_content)]
 
     response = _get_client().messages.create(
-        model="claude-haiku-4-5",
-        max_tokens=300,
-        timeout=45.0,
-        system=[
-            {
-                "type": "text",
-                "text": SYSTEM_PROMPT,
-                "cache_control": {"type": "ephemeral"},
-            }
-        ],
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": f"## Kuluttajaliiton viimeaikaiset lausunnot\n\n{context_text}",
-                        "cache_control": {"type": "ephemeral"},
-                    },
-                    {
-                        "type": "text",
-                        "text": item_text,
-                    },
-                ],
-            }
-        ],
+        model=scoring_config.model,
+        max_tokens=scoring_config.max_tokens,
+        timeout=scoring_config.timeout_seconds,
+        system=system_blocks,
+        messages=messages,
     )
 
     text_parts: list[str] = []

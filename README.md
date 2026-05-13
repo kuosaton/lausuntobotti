@@ -28,7 +28,7 @@ All data comes from publicly accessible sources:
 
 ### Relevancy scoring
 
-Each proposal is scored by [Claude Haiku 4.5](https://www.anthropic.com/news/claude-haiku-4-5) based on Kuluttajaliitto's previously published statements and areas of focus. The rubric is:
+Each proposal is scored by Claude based on Kuluttajaliitto's previously published statements and areas of focus. The default model is [Claude Haiku 4.5](https://www.anthropic.com/news/claude-haiku-4-5), and the scoring model/settings are configurable. The rubric is:
 
 - 8 to 10: Clearly within Kuluttajaliitto's core mandate such as consumer protection, product safety, financial services, or housing.
 - 5 to 7: Concerns consumers indirectly, or is adjacent to Kuluttajaliitto's priorities.
@@ -84,6 +84,23 @@ Edit `.env` with your values:
 | `RESEND_API_KEY`    | Resend API key for email sending                        |
 | `SENDER_EMAIL`      | From address (must be on a domain verified with Resend) |
 | `RECIPIENT_EMAIL`   | Comma-separated recipient addresses for digests         |
+
+#### Model configuration
+
+Scoring defaults live in [`model_config.toml`](model_config.toml):
+
+```toml
+[scoring]
+model = "claude-haiku-4-5"
+max_tokens = 300
+timeout_seconds = 45.0
+prompt_cache = true
+cache_ttl = "5m"
+```
+
+Edit this file for normal local experimentation. For deployment-specific overrides, set the optional `CLAUDE_SCORING_*` environment variables shown in `.env.example`; environment variables take precedence over `model_config.toml`.
+
+Haiku 4.5 is the default because Lausuntobotti does high-volume, short, structured relevance scoring. Sonnet 4.6 is a useful candidate for ambiguous or borderline items, but compare it against historical `score_log.jsonl` examples before switching globally. `max_tokens`, timeout, and cache settings are tuning knobs, not required setup.
 
 #### 3. Fetch up-to-date Kuluttajaliitto published statements context (required before first run)
 
