@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from datetime import date, datetime
+from typing import TypedDict
 
 import resend
 
@@ -12,12 +13,19 @@ def _fmt_date(d: date | datetime) -> str:
     return f"{d.day}.{d.month}.{d.year}"
 
 
-def _deadline_display(deadline: date | datetime | None) -> str:
+def _deadline_info(deadline: date | datetime | None) -> tuple[str, int] | None:
     if deadline is None:
-        return "-"
+        return None
     d = deadline.date() if isinstance(deadline, datetime) else deadline
     days = (d - date.today()).days
-    date_str = _fmt_date(deadline)
+    return _fmt_date(deadline), days
+
+
+def _deadline_display(deadline: date | datetime | None) -> str:
+    info = _deadline_info(deadline)
+    if info is None:
+        return "-"
+    date_str, days = info
     if days > 0:
         return f"{date_str} ({days} pv)"
     if days == 0:
@@ -26,11 +34,10 @@ def _deadline_display(deadline: date | datetime | None) -> str:
 
 
 def _deadline_html(deadline: date | datetime | None) -> str:
-    if deadline is None:
+    info = _deadline_info(deadline)
+    if info is None:
         return "-"
-    d = deadline.date() if isinstance(deadline, datetime) else deadline
-    days = (d - date.today()).days
-    date_str = _fmt_date(deadline)
+    date_str, days = info
     if days <= 0:
         return date_str
     if days <= 7:
@@ -40,6 +47,17 @@ def _deadline_html(deadline: date | datetime | None) -> str:
     else:
         style = "color:#888;"
     return f'{date_str} <span style="{style}">({days} pv)</span>'
+
+
+def _footer_html() -> str:
+    return (
+        '  <p style="font-size:11px;color:#aaa;">\n'
+        "    Lausuntobotti &middot; "
+        '<a href="https://github.com/kuosaton/lausuntobotti" target="_blank" '
+        'style="color:#aaa;">GitHub</a>\n'
+        "    &middot; Palautetta, kommentteja? Voit vastata suoraan tähän viestiin.\n"
+        "  </p>"
+    )
 
 
 def send_email(subject: str, html_body: str, text_body: str = "") -> None:
@@ -76,32 +94,56 @@ def _sort_items(items: list[dict]) -> list[dict]:
     )
 
 
-def _render_text_entry(item: dict, separator: str) -> list[str]:
+class _EntryFields(TypedDict):
+    title: str
+    organization: str
+    published_str: str
+    deadline_display: str
+    deadline_html: str
+    themes: list[str]
+    rationale: str
+    score: int
+    url: str
+
+
+def _entry_fields(item: dict) -> _EntryFields:
     p = item["proposal"]
     published_str = _fmt_date(p.published_on) if getattr(p, "published_on", None) else "-"
-    deadline_str = _deadline_display(p.deadline)
-    themes = item.get("themes", [])
+    return {
+        "title": p.title,
+        "organization": p.organization_name,
+        "published_str": published_str,
+        "deadline_display": _deadline_display(p.deadline),
+        "deadline_html": _deadline_html(p.deadline),
+        "themes": item.get("themes", []),
+        "rationale": item["rationale"],
+        "score": item["score"],
+        "url": p.url,
+    }
+
+
+def _render_text_entry(item: dict, separator: str) -> list[str]:
+    fields = _entry_fields(item)
+    themes = fields["themes"]
     entry = [
         separator,
-        f"▸ [{item['score']}/10] {p.title}",
-        f"   Pyytäjä:   {p.organization_name}",
-        f"   Julkaistu: {published_str}",
-        f"   Määräaika: {deadline_str}",
-        f"   {item['rationale']}",
+        f"▸ [{fields['score']}/10] {fields['title']}",
+        f"   Pyytäjä:   {fields['organization']}",
+        f"   Julkaistu: {fields['published_str']}",
+        f"   Määräaika: {fields['deadline_display']}",
+        f"   {fields['rationale']}",
     ]
     if themes:
         entry.append(f"   Teemat:    {', '.join(themes)}")
-    if p.url:
-        entry.append(f"   {p.url}")
+    if fields["url"]:
+        entry.append(f"   {fields['url']}")
     entry.append("")
     return entry
 
 
 def _render_html_entry(item: dict) -> str:
-    p = item["proposal"]
-    published_str = _fmt_date(p.published_on) if getattr(p, "published_on", None) else "-"
-    deadline_str = _deadline_html(p.deadline)
-    themes = ", ".join(item.get("themes", []))
+    fields = _entry_fields(item)
+    themes = ", ".join(fields["themes"])
     themes_html = (
         f'<p style="margin:4px 0 0;font-size:12px;color:#888;">Teemat: {themes}</p>'
         if themes
@@ -110,15 +152,15 @@ def _render_html_entry(item: dict) -> str:
     return f"""
         <div style="margin-bottom:24px;padding:16px;border-left:4px solid #1a56a0;background:#f8f9fa;">
           <p style="margin:0 0 6px;font-size:15px;font-weight:bold;">
-            <a href="{p.url}" style="color:#1a56a0;text-decoration:none;">{p.title}</a>
+            <a href="{fields["url"]}" style="color:#1a56a0;text-decoration:none;">{fields["title"]}</a>
           </p>
           <table style="font-size:13px;color:#555;border-collapse:collapse;">
-            <tr><td style="padding:2px 12px 2px 0;white-space:nowrap;">Pyytäjä</td><td>{p.organization_name}</td></tr>
-            <tr><td style="padding:2px 12px 2px 0;white-space:nowrap;">Julkaistu</td><td>{published_str}</td></tr>
-            <tr><td style="padding:2px 12px 2px 0;white-space:nowrap;">Määräaika</td><td>{deadline_str}</td></tr>
-            <tr><td style="padding:2px 12px 2px 0;white-space:nowrap;">Relevanssi</td><td>{item["score"]}/10</td></tr>
+            <tr><td style="padding:2px 12px 2px 0;white-space:nowrap;">Pyytäjä</td><td>{fields["organization"]}</td></tr>
+            <tr><td style="padding:2px 12px 2px 0;white-space:nowrap;">Julkaistu</td><td>{fields["published_str"]}</td></tr>
+            <tr><td style="padding:2px 12px 2px 0;white-space:nowrap;">Määräaika</td><td>{fields["deadline_html"]}</td></tr>
+            <tr><td style="padding:2px 12px 2px 0;white-space:nowrap;">Relevanssi</td><td>{fields["score"]}/10</td></tr>
           </table>
-          <p style="margin:8px 0 0;font-size:13px;color:#333;">{item["rationale"]}</p>
+          <p style="margin:8px 0 0;font-size:13px;color:#333;">{fields["rationale"]}</p>
           {themes_html}
         </div>"""
 
@@ -178,10 +220,7 @@ def build_daily_digest(
 <head><meta charset="utf-8"><title>{subject}</title></head>
 <body style="font-family:Arial,sans-serif;max-width:680px;margin:0 auto;padding:24px;color:#222;">{flagged_section_html}{borderline_section_html}
   <hr style="border:none;border-top:1px solid #ddd;margin:32px 0 16px;">
-  <p style="font-size:11px;color:#aaa;">
-    Lausuntobotti &middot; <a href="https://github.com/kuosaton/lausuntobotti" target="_blank" style="color:#aaa;">GitHub</a>
-    &middot; Palautetta, kommentteja? Voit vastata suoraan tähän viestiin.
-  </p>
+{_footer_html()}
 </body>
 </html>"""
 
@@ -197,56 +236,101 @@ def _weekly_text_body(
     committee_items: dict[str, list[dict]],
     week_number: int,
     total_flagged: int,
-    total_scored: int,
-    total_logged: int,
+    summary_lines: list[str],
 ) -> str:
     lines = [f"Viikkokatsaus, vko {week_number}\n"]
     for key, items in committee_items.items():
-        name = COMMITTEE_DISPLAY_NAMES.get(key, key)
+        name = _committee_display_name(key)
         lines.append(f"--- {name.upper()} ---\n")
         if not items:
             lines.append("Ei nostettavia asioita.\n")
         for item in items:
+            fields = _weekly_entry_fields(item)
             lines += [
-                f"▸ {item['title']}",
-                f"   Tunnus:     {item.get('eduskuntatunnus', '-')}",
-                f"   Relevanssi: {item['score']}/10",
-                f"   {item['rationale']}",
-                f"   {item.get('url', '')}",
+                f"▸ {fields['title']}",
+                f"   Tunnus:     {fields['eduskuntatunnus']}",
+                f"   Relevanssi: {fields['score']}/10",
+                f"   {fields['rationale']}",
+                f"   {fields['url']}",
                 "",
             ]
-    lines += [
-        "---",
-        f"Arvioitu yhteensä: {total_scored} asiaa",
-        f"Nostettu: {total_flagged}",
-        f"Lokitettu (pistemäärä 4-6): {total_logged}",
-    ]
+    lines += summary_lines
     return "\n".join(lines)
 
 
 def _weekly_html_sections(committee_items: dict[str, list[dict]]) -> str:
     sections_html = ""
     for key, items in committee_items.items():
-        name = COMMITTEE_DISPLAY_NAMES.get(key, key)
+        name = _committee_display_name(key)
         items_html = ""
         if not items:
             items_html = '<p style="color:#888;font-size:13px;">Ei nostettavia asioita.</p>'
         for item in items:
-            themes = ", ".join(item.get("themes", []))
+            fields = _weekly_entry_fields(item)
+            themes = ", ".join(fields["themes"])
+            title_html = (
+                f'<a href="{fields["url"]}" style="color:#1a56a0;text-decoration:none;">{fields["title"]}</a>'
+                if fields["url"]
+                else fields["title"]
+            )
             items_html += f"""
             <div style="margin-bottom:20px;padding:14px;border-left:4px solid #1a56a0;background:#f8f9fa;">
               <p style="margin:0 0 4px;font-size:14px;font-weight:bold;">
-                {f'<a href="{item["url"]}" style="color:#1a56a0;text-decoration:none;">' if item.get("url") else ""}{item["title"]}{("</a>" if item.get("url") else "")}
+                {title_html}
               </p>
-              <p style="margin:0 0 4px;font-size:12px;color:#666;">{item.get("eduskuntatunnus", "")}</p>
-              <p style="margin:4px 0;font-size:13px;"><strong>Relevanssi:</strong> {item["score"]}/10</p>
-              <p style="margin:4px 0;font-size:13px;color:#333;">{item["rationale"]}</p>
+              <p style="margin:0 0 4px;font-size:12px;color:#666;">{fields["eduskuntatunnus"]}</p>
+              <p style="margin:4px 0;font-size:13px;"><strong>Relevanssi:</strong> {fields["score"]}/10</p>
+              <p style="margin:4px 0;font-size:13px;color:#333;">{fields["rationale"]}</p>
               {f'<p style="margin:4px 0;font-size:12px;color:#888;">Teemat: {themes}</p>' if themes else ""}
             </div>"""
         sections_html += f"""
         <h3 style="color:#1a56a0;border-bottom:1px solid #ddd;padding-bottom:6px;">{name}</h3>
         {items_html}"""
     return sections_html
+
+
+def _weekly_summary(
+    total_scored: int,
+    total_flagged: int,
+    total_logged: int,
+) -> tuple[list[str], str]:
+    text_lines = [
+        "---",
+        f"Arvioitu yhteensä: {total_scored} asiaa",
+        f"Nostettu: {total_flagged}",
+        f"Lokitettu (pistemäärä 4-6): {total_logged}",
+    ]
+    html = (
+        '  <p style="font-size:12px;color:#888;">\n'
+        f"    Arvioitu: {total_scored} asiaa &ndash; Nostettu: {total_flagged} &ndash;\n"
+        f"    Lokitettu (4-6): {total_logged}\n"
+        "  </p>"
+    )
+    return text_lines, html
+
+
+class _WeeklyEntryFields(TypedDict):
+    title: str
+    url: str
+    eduskuntatunnus: str
+    score: int
+    rationale: str
+    themes: list[str]
+
+
+def _weekly_entry_fields(item: dict) -> _WeeklyEntryFields:
+    return {
+        "title": item["title"],
+        "url": item.get("url", ""),
+        "eduskuntatunnus": item.get("eduskuntatunnus", "-"),
+        "score": item["score"],
+        "rationale": item["rationale"],
+        "themes": item.get("themes", []),
+    }
+
+
+def _committee_display_name(key: str) -> str:
+    return COMMITTEE_DISPLAY_NAMES.get(key, key)
 
 
 def build_weekly_digest(
@@ -257,9 +341,8 @@ def build_weekly_digest(
 ) -> tuple[str, str, str]:
     subject = f"Lausuntobotin viikkokatsaus, vko {week_number}"
     total_flagged = sum(len(v) for v in committee_items.values())
-    text_body = _weekly_text_body(
-        committee_items, week_number, total_flagged, total_scored, total_logged
-    )
+    summary_lines, summary_html = _weekly_summary(total_scored, total_flagged, total_logged)
+    text_body = _weekly_text_body(committee_items, week_number, total_flagged, summary_lines)
     sections_html = _weekly_html_sections(committee_items)
     html_body = f"""<!DOCTYPE html>
 <html lang="fi">
@@ -269,14 +352,8 @@ def build_weekly_digest(
   <p style="color:#666;margin-top:0;">Viikko {week_number}</p>
   {sections_html}
   <hr style="border:none;border-top:1px solid #ddd;margin:32px 0 16px;">
-  <p style="font-size:12px;color:#888;">
-    Arvioitu: {total_scored} asiaa &ndash; Nostettu: {total_flagged} &ndash;
-    Lokitettu (4-6): {total_logged}
-  </p>
-  <p style="font-size:11px;color:#aaa;">
-    Lausuntobotti &middot; <a href="https://github.com/kuosaton/lausuntobotti" target="_blank" style="color:#aaa;">GitHub</a>
-    &middot; Palautetta, kommentteja? Voit vastata suoraan tähän viestiin.
-  </p>
+{summary_html}
+{_footer_html()}
 </body>
 </html>"""
     return subject, html_body, text_body
