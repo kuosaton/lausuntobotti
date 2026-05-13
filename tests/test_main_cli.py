@@ -4,351 +4,98 @@ import pytest
 
 import main
 
-
-def test_main_dispatches_preview(monkeypatch) -> None:
-    called = {"preview": False}
-
-    monkeypatch.setattr(main, "cmd_preview_flagged", lambda: called.__setitem__("preview", True))
-    monkeypatch.setattr(main, "cmd_daily", lambda dry_run: None)
-    monkeypatch.setattr(main, "cmd_weekly", lambda dry_run: None)
-    monkeypatch.setattr(main, "cmd_midweek", lambda dry_run: None)
-    monkeypatch.setattr(main, "cmd_update_context", lambda: None)
-    monkeypatch.setattr(main, "cmd_review_logged", lambda days: None)
-    monkeypatch.setattr(main, "cmd_preview_logged", lambda days: None)
-    monkeypatch.setattr(
-        "sys.argv",
-        ["main.py", "--preview-flagged"],
-    )
-
-    main.main()
-    assert called["preview"] is True
+# Commands that argparse dispatches to. cmd_interactive is excluded because some
+# tests need the real menu loop to run.
+_DISPATCHABLE_COMMANDS = (
+    "cmd_update_context",
+    "cmd_daily",
+    "cmd_weekly",
+    "cmd_midweek",
+    "cmd_review_logged",
+    "cmd_preview_flagged",
+    "cmd_preview_logged",
+    "cmd_send_flagged",
+    "cmd_reset_state",
+)
 
 
-def test_main_dispatches_preview_logged(monkeypatch) -> None:
-    called = {"preview_logged": False}
-
-    monkeypatch.setattr(main, "cmd_preview_flagged", lambda: None)
-    monkeypatch.setattr(main, "cmd_daily", lambda dry_run: None)
-    monkeypatch.setattr(main, "cmd_weekly", lambda dry_run: None)
-    monkeypatch.setattr(main, "cmd_midweek", lambda dry_run: None)
-    monkeypatch.setattr(main, "cmd_update_context", lambda: None)
-    monkeypatch.setattr(main, "cmd_review_logged", lambda days: None)
-    monkeypatch.setattr(
-        main, "cmd_preview_logged", lambda days: called.__setitem__("preview_logged", True)
-    )
-    monkeypatch.setattr("sys.argv", ["main.py", "--preview-logged"])
-
-    main.main()
-    assert called["preview_logged"] is True
+def _stub_dispatchable(monkeypatch) -> None:
+    """No-op every dispatchable command so a test only sees the one under test."""
+    for name in _DISPATCHABLE_COMMANDS:
+        monkeypatch.setattr(main, name, lambda *args, **kwargs: None)
 
 
-def test_main_without_flags_launches_interactive(monkeypatch) -> None:
-    monkeypatch.setattr("sys.argv", ["main.py"])
-    # Should not raise; interactive mode auto-exits via fixture returning "0"
-    main.main()
+def _menu_input(inputs: list[str]):
+    """Build a mock input() that returns `inputs` in order at the '>' prompt."""
+    it = iter(inputs)
 
-
-def test_interactive_menu_choice_daily(monkeypatch) -> None:
-    called = {"daily": False}
-
-    def mock_daily(dry_run):
-        called["daily"] = True
-
-    # Simulate choosing "1" (daily check) then "0" (exit)
-    inputs = ["1", "0"]
-    input_iter = iter(inputs)
-
-    def mock_input(prompt):
-        val = next(input_iter)
+    def _fake(prompt):
         if prompt.strip() == ">":
-            return val
+            return next(it)
         return "y"
 
-    monkeypatch.setattr("builtins.input", mock_input)
-    monkeypatch.setattr(main, "cmd_daily", mock_daily)
-    monkeypatch.setattr("sys.argv", ["main.py"])
+    return _fake
+
+
+# ---------------------------------------------------------------------------
+# CLI flag dispatch
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "argv, cmd_attr, expected_call",
+    [
+        # Simple no-arg commands
+        (["--update-context"], "cmd_update_context", ()),
+        (["--preview-flagged"], "cmd_preview_flagged", ()),
+        (["--reset-state"], "cmd_reset_state", ()),
+        (["--interactive"], "cmd_interactive", ()),
+        # Commands that take dry_run — both default (False) and explicit True
+        (["--daily"], "cmd_daily", (False,)),
+        (["--daily", "--dry-run"], "cmd_daily", (True,)),
+        (["--weekly"], "cmd_weekly", (False,)),
+        (["--weekly", "--dry-run"], "cmd_weekly", (True,)),
+        (["--midweek"], "cmd_midweek", (False,)),
+        (["--send-flagged"], "cmd_send_flagged", (False,)),
+        (["--send-flagged", "--dry-run"], "cmd_send_flagged", (True,)),
+        # Commands that take a days argument — default and explicit
+        (["--review-logged"], "cmd_review_logged", (7,)),
+        (["--review-logged", "--days", "14"], "cmd_review_logged", (14,)),
+        (["--preview-logged"], "cmd_preview_logged", (7,)),
+        (["--preview-logged", "--days", "3"], "cmd_preview_logged", (3,)),
+    ],
+)
+def test_main_dispatches_cli_flag(monkeypatch, argv, cmd_attr, expected_call) -> None:
+    """Each CLI flag invokes its command with the right argument values."""
+    _stub_dispatchable(monkeypatch)
+
+    captured: dict = {"args": None}
+
+    def _capture(*args, **kwargs):
+        # Normalize: positional args plus keyword args in declared order
+        captured["args"] = args + tuple(kwargs.values())
+
+    monkeypatch.setattr(main, cmd_attr, _capture)
+    monkeypatch.setattr("sys.argv", ["main.py", *argv])
 
     main.main()
-    assert called["daily"] is True
 
-
-def test_interactive_menu_choice_daily_dry_run(monkeypatch) -> None:
-    called = {"daily_dry_run": False}
-
-    def mock_daily(dry_run):
-        if dry_run:
-            called["daily_dry_run"] = True
-
-    # Simulate choosing "2" (daily dry run) then "0" (exit)
-    inputs = ["2", "0"]
-    input_iter = iter(inputs)
-
-    def mock_input(prompt):
-        val = next(input_iter)
-        if prompt.strip() == ">":
-            return val
-        return "y"
-
-    monkeypatch.setattr("builtins.input", mock_input)
-    monkeypatch.setattr(main, "cmd_daily", mock_daily)
-    monkeypatch.setattr("sys.argv", ["main.py"])
-
-    main.main()
-    assert called["daily_dry_run"] is True
-
-
-def test_interactive_menu_choice_update_context(monkeypatch) -> None:
-    called = {"update_context": False}
-
-    def mock_update():
-        called["update_context"] = True
-
-    # Simulate choosing "3" (update context) then "0" (exit)
-    inputs = ["3", "0"]
-    input_iter = iter(inputs)
-
-    def mock_input(prompt):
-        val = next(input_iter)
-        if prompt.strip() == ">":
-            return val
-        return "y"
-
-    monkeypatch.setattr("builtins.input", mock_input)
-    monkeypatch.setattr(main, "cmd_update_context", mock_update)
-    monkeypatch.setattr("sys.argv", ["main.py"])
-
-    main.main()
-    assert called["update_context"] is True
-
-
-def test_interactive_menu_choice_review_logged(monkeypatch) -> None:
-    called = {"review_logged": False}
-
-    def mock_review(days):
-        called["review_logged"] = True
-
-    # Simulate choosing "4" (review 7 days) then "0" (exit)
-    inputs = ["4", "0"]
-    input_iter = iter(inputs)
-
-    def mock_input(prompt):
-        val = next(input_iter)
-        if prompt.strip() == ">":
-            return val
-        return "y"
-
-    monkeypatch.setattr("builtins.input", mock_input)
-    monkeypatch.setattr(main, "cmd_review_logged", mock_review)
-    monkeypatch.setattr("sys.argv", ["main.py"])
-
-    main.main()
-    assert called["review_logged"] is True
-
-
-def test_interactive_menu_choice_preview_flagged(monkeypatch) -> None:
-    called = {"preview": False}
-
-    def mock_preview():
-        called["preview"] = True
-
-    # Simulate choosing "6" (preview flagged) then "0" (exit)
-    inputs = ["6", "0"]
-    input_iter = iter(inputs)
-
-    def mock_input(prompt):
-        val = next(input_iter)
-        if prompt.strip() == ">":
-            return val
-        return "y"
-
-    monkeypatch.setattr("builtins.input", mock_input)
-    monkeypatch.setattr(main, "cmd_preview_flagged", mock_preview)
-    monkeypatch.setattr("sys.argv", ["main.py"])
-
-    main.main()
-    assert called["preview"] is True
-
-
-def test_interactive_menu_choice_preview_logged(monkeypatch) -> None:
-    called = {"preview_logged": False}
-
-    def mock_preview_logged(days):
-        called["preview_logged"] = True
-
-    inputs = ["7", "7", "0"]
-    input_iter = iter(inputs)
-
-    def mock_input(prompt):
-        return next(input_iter)
-
-    monkeypatch.setattr("builtins.input", mock_input)
-    monkeypatch.setattr(main, "cmd_preview_logged", mock_preview_logged)
-    monkeypatch.setattr("sys.argv", ["main.py"])
-
-    main.main()
-    assert called["preview_logged"] is True
-
-
-def test_interactive_menu_choice_reset_state(monkeypatch) -> None:
-    called = {"reset": False}
-
-    def mock_reset():
-        called["reset"] = True
-
-    # Simulate choosing "9" (reset state) then "0" (exit)
-    inputs = ["9", "0"]
-    input_iter = iter(inputs)
-
-    def mock_input(prompt):
-        val = next(input_iter)
-        if prompt.strip() == ">":
-            return val
-        return "y"
-
-    monkeypatch.setattr("builtins.input", mock_input)
-    monkeypatch.setattr(main, "cmd_reset_state", mock_reset)
-    monkeypatch.setattr("sys.argv", ["main.py"])
-
-    main.main()
-    assert called["reset"] is True
-
-
-def test_interactive_menu_choice_send_flagged(monkeypatch) -> None:
-    called = {"sent": False}
-
-    def mock_send_flagged(dry_run):
-        called["sent"] = True
-
-    inputs = ["8", "0"]
-    input_iter = iter(inputs)
-
-    def mock_input(prompt):
-        val = next(input_iter)
-        if prompt.strip() == ">":
-            return val
-        return "y"
-
-    monkeypatch.setattr("builtins.input", mock_input)
-    monkeypatch.setattr(main, "cmd_send_flagged", mock_send_flagged)
-    monkeypatch.setattr("sys.argv", ["main.py"])
-
-    main.main()
-    assert called["sent"] is True
-
-
-def test_interactive_menu_invalid_choice(monkeypatch) -> None:
-    # Simulate choosing an invalid option, then "0" (exit)
-    inputs = ["99", "0"]
-    input_iter = iter(inputs)
-
-    def mock_input(prompt):
-        val = next(input_iter)
-        if prompt.strip() == ">":
-            return val
-        return "y"
-
-    monkeypatch.setattr("builtins.input", mock_input)
-    monkeypatch.setattr("sys.argv", ["main.py"])
-
-    # Should not raise, just print error and continue
-    main.main()
-
-
-def test_interactive_menu_choice_review_custom_days_valid(monkeypatch) -> None:
-    called = {"days": None}
-    inputs = ["5", "14", "0"]
-    input_iter = iter(inputs)
-
-    def mock_input(prompt):
-        if prompt.strip() == ">":
-            return next(input_iter)
-        if "Days to look back" in prompt:
-            return next(input_iter)
-        return "y"
-
-    monkeypatch.setattr("builtins.input", mock_input)
-    monkeypatch.setattr(main, "cmd_review_logged", lambda days: called.__setitem__("days", days))
-    monkeypatch.setattr("sys.argv", ["main.py"])
-
-    main.main()
-    assert called["days"] == 14
-
-
-def test_interactive_menu_choice_review_custom_days_invalid(monkeypatch, capsys) -> None:
-    called = {"count": 0}
-    inputs = ["5", "oops", "0"]
-    input_iter = iter(inputs)
-
-    def mock_input(prompt):
-        if prompt.strip() == ">":
-            return next(input_iter)
-        if "Days to look back" in prompt:
-            return next(input_iter)
-        return "y"
-
-    monkeypatch.setattr("builtins.input", mock_input)
-    monkeypatch.setattr(
-        main,
-        "cmd_review_logged",
-        lambda days: called.__setitem__("count", called["count"] + 1),
-    )
-    monkeypatch.setattr("sys.argv", ["main.py"])
-
-    main.main()
-    out = capsys.readouterr().out
-    assert "Invalid number" in out
-    assert called["count"] == 0
-
-
-def test_cmd_interactive_handles_keyboard_interrupt(monkeypatch) -> None:
-    def _raise_interrupt(prompt):
-        raise KeyboardInterrupt
-
-    monkeypatch.setattr("builtins.input", _raise_interrupt)
-    main.cmd_interactive()
-
-
-def test_unimplemented_commands_exit() -> None:
-    with pytest.raises(SystemExit) as weekly:
-        main.cmd_weekly(dry_run=True)
-    with pytest.raises(SystemExit) as midweek:
-        main.cmd_midweek(dry_run=True)
-    assert weekly.value.code == 1
-    assert midweek.value.code == 1
+    assert captured["args"] == expected_call
 
 
 def test_main_dispatches_all_selected_flags(monkeypatch) -> None:
-    called = {
-        "update_context": 0,
-        "daily": 0,
-        "weekly": 0,
-        "midweek": 0,
-        "review_logged": 0,
-        "preview": 0,
-        "send_flagged": 0,
-        "preview_logged": 0,
-    }
+    """All flags together: each command is invoked exactly once with right args."""
+    called: dict = {}
 
-    monkeypatch.setattr(main, "cmd_update_context", lambda: called.__setitem__("update_context", 1))
-    monkeypatch.setattr(
-        main, "cmd_daily", lambda dry_run: called.__setitem__("daily", int(dry_run))
-    )
-    monkeypatch.setattr(
-        main, "cmd_weekly", lambda dry_run: called.__setitem__("weekly", int(dry_run))
-    )
-    monkeypatch.setattr(
-        main, "cmd_midweek", lambda dry_run: called.__setitem__("midweek", int(dry_run))
-    )
-    monkeypatch.setattr(
-        main, "cmd_review_logged", lambda days: called.__setitem__("review_logged", days)
-    )
-    monkeypatch.setattr(main, "cmd_preview_flagged", lambda: called.__setitem__("preview", 1))
-    monkeypatch.setattr(
-        main, "cmd_send_flagged", lambda dry_run: called.__setitem__("send_flagged", int(dry_run))
-    )
-    monkeypatch.setattr(
-        main, "cmd_preview_logged", lambda days: called.__setitem__("preview_logged", days)
-    )
+    def _record(name):
+        def _f(*args, **kwargs):
+            called[name] = (args, kwargs)
+
+        return _f
+
+    for name in _DISPATCHABLE_COMMANDS:
+        monkeypatch.setattr(main, name, _record(name))
+
     monkeypatch.setattr(
         "sys.argv",
         [
@@ -369,50 +116,127 @@ def test_main_dispatches_all_selected_flags(monkeypatch) -> None:
 
     main.main()
 
-    assert called["update_context"] == 1
-    assert called["daily"] == 1
-    assert called["weekly"] == 1
-    assert called["midweek"] == 1
-    assert called["review_logged"] == 3
-    assert called["preview"] == 1
-    assert called["send_flagged"] == 1
-    assert called["preview_logged"] == 3
+    assert "cmd_update_context" in called
+    assert called["cmd_daily"][1] == {"dry_run": True}  # --dry-run propagates
+    assert called["cmd_weekly"][1] == {"dry_run": True}
+    assert called["cmd_midweek"][1] == {"dry_run": True}
+    assert called["cmd_review_logged"][1] == {"days": 3}
+    assert "cmd_preview_flagged" in called
+    assert called["cmd_send_flagged"][1] == {"dry_run": True}
+    assert called["cmd_preview_logged"][1] == {"days": 3}
 
 
-def test_main_dispatches_reset_state_flag(monkeypatch) -> None:
-    called = {"reset": False}
+def test_main_without_flags_launches_interactive(monkeypatch) -> None:
+    """No flags → interactive menu (which auto-exits on EOF)."""
+    monkeypatch.setattr("sys.argv", ["main.py"])
+    main.main()  # should not raise
 
-    monkeypatch.setattr(main, "cmd_update_context", lambda: None)
-    monkeypatch.setattr(main, "cmd_daily", lambda dry_run: None)
-    monkeypatch.setattr(main, "cmd_weekly", lambda dry_run: None)
-    monkeypatch.setattr(main, "cmd_midweek", lambda dry_run: None)
-    monkeypatch.setattr(main, "cmd_review_logged", lambda days: None)
-    monkeypatch.setattr(main, "cmd_preview_flagged", lambda: None)
-    monkeypatch.setattr(main, "cmd_preview_logged", lambda days: None)
-    monkeypatch.setattr(main, "cmd_reset_state", lambda: called.__setitem__("reset", True))
-    monkeypatch.setattr("sys.argv", ["main.py", "--reset-state"])
+
+# ---------------------------------------------------------------------------
+# Interactive menu dispatch
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "menu_key, cmd_attr, expected_call",
+    [
+        ("1", "cmd_daily", (False,)),
+        ("2", "cmd_daily", (True,)),
+        ("3", "cmd_update_context", ()),
+        ("4", "cmd_review_logged", (7,)),
+        ("6", "cmd_preview_flagged", ()),
+        ("8", "cmd_send_flagged", (False,)),
+        ("9", "cmd_reset_state", ()),
+    ],
+)
+def test_interactive_menu_dispatches_choice(monkeypatch, menu_key, cmd_attr, expected_call) -> None:
+    """Each numeric menu key invokes its command with the right argument values."""
+    _stub_dispatchable(monkeypatch)
+
+    captured: dict = {"args": None}
+
+    def _capture(*args, **kwargs):
+        captured["args"] = args + tuple(kwargs.values())
+
+    monkeypatch.setattr(main, cmd_attr, _capture)
+    monkeypatch.setattr("builtins.input", _menu_input([menu_key, "0"]))
+    monkeypatch.setattr("sys.argv", ["main.py"])
 
     main.main()
-    assert called["reset"] is True
+    assert captured["args"] == expected_call
 
 
-def test_main_dispatches_interactive_flag(monkeypatch) -> None:
-    called = {"interactive": False}
+def test_interactive_menu_choice_preview_logged_uses_default_days(monkeypatch) -> None:
+    """Option 7 prompts for days; empty input → default 7."""
+    _stub_dispatchable(monkeypatch)
+    called: dict = {}
+    monkeypatch.setattr(main, "cmd_preview_logged", lambda days: called.__setitem__("days", days))
+    # Inputs: "7" (menu choice), "" (empty days → default), "0" (exit)
+    inputs = iter(["7", "", "0"])
+    monkeypatch.setattr("builtins.input", lambda prompt: next(inputs))
+    monkeypatch.setattr("sys.argv", ["main.py"])
 
-    monkeypatch.setattr(main, "cmd_update_context", lambda: None)
-    monkeypatch.setattr(main, "cmd_daily", lambda dry_run: None)
-    monkeypatch.setattr(main, "cmd_weekly", lambda dry_run: None)
-    monkeypatch.setattr(main, "cmd_midweek", lambda dry_run: None)
-    monkeypatch.setattr(main, "cmd_review_logged", lambda days: None)
-    monkeypatch.setattr(main, "cmd_preview_flagged", lambda: None)
-    monkeypatch.setattr(main, "cmd_preview_logged", lambda days: None)
-    monkeypatch.setattr(main, "cmd_reset_state", lambda: None)
+    main.main()
+    assert called["days"] == 7
+
+
+def test_interactive_menu_invalid_choice(monkeypatch) -> None:
+    """Unknown menu input prints help and continues; '0' exits cleanly."""
+    monkeypatch.setattr("builtins.input", _menu_input(["99", "0"]))
+    monkeypatch.setattr("sys.argv", ["main.py"])
+    main.main()  # should not raise
+
+
+def test_interactive_menu_choice_review_custom_days_valid(monkeypatch) -> None:
+    """Option 5 prompts for days; valid int passes through."""
+    _stub_dispatchable(monkeypatch)
+    called: dict = {}
+    monkeypatch.setattr(main, "cmd_review_logged", lambda days: called.__setitem__("days", days))
+    inputs = iter(["5", "14", "0"])
+    monkeypatch.setattr("builtins.input", lambda prompt: next(inputs))
+    monkeypatch.setattr("sys.argv", ["main.py"])
+
+    main.main()
+    assert called["days"] == 14
+
+
+def test_interactive_menu_choice_review_custom_days_invalid(monkeypatch, capsys) -> None:
+    """Option 5 with non-numeric input prints error, does NOT call review."""
+    _stub_dispatchable(monkeypatch)
+    called: dict = {"count": 0}
     monkeypatch.setattr(
-        main,
-        "cmd_interactive",
-        lambda: called.__setitem__("interactive", True),
+        main, "cmd_review_logged", lambda days: called.__setitem__("count", called["count"] + 1)
     )
-    monkeypatch.setattr("sys.argv", ["main.py", "--interactive"])
+    inputs = iter(["5", "oops", "0"])
+    monkeypatch.setattr("builtins.input", lambda prompt: next(inputs))
+    monkeypatch.setattr("sys.argv", ["main.py"])
 
     main.main()
-    assert called["interactive"] is True
+    out = capsys.readouterr().out
+    assert "Invalid number" in out
+    assert called["count"] == 0
+
+
+def test_cmd_interactive_handles_keyboard_interrupt(monkeypatch) -> None:
+    """Ctrl-C at the menu prompt exits cleanly."""
+
+    def _raise(prompt):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("builtins.input", _raise)
+    main.cmd_interactive()
+
+
+# ---------------------------------------------------------------------------
+# Unimplemented commands
+# ---------------------------------------------------------------------------
+
+
+def test_unimplemented_commands_exit() -> None:
+    """--weekly and --midweek currently exit 1 (planned features)."""
+    with pytest.raises(SystemExit) as weekly:
+        main.cmd_weekly(dry_run=True)
+    with pytest.raises(SystemExit) as midweek:
+        main.cmd_midweek(dry_run=True)
+    assert weekly.value.code == 1
+    assert midweek.value.code == 1
