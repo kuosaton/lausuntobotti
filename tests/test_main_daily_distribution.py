@@ -34,7 +34,7 @@ def test_cmd_daily_skips_when_kuluttajaliitto_already_on_distribution_list(
     monkeypatch.setattr(config, "SCORE_LOG_PATH", score_log_path)
     monkeypatch.setattr(config, "FLAGGED_PATH", flagged_path)
     monkeypatch.setattr(config, "CONTEXT_PATH", context_path)
-    monkeypatch.setattr(config, "NOTIFY_THRESHOLD", 7)
+    monkeypatch.setattr(config, "FLAG_THRESHOLD", 6)
     monkeypatch.setattr(config, "LOG_THRESHOLD", 4)
     monkeypatch.setattr(config, "LAUSUNTOPALVELU_FETCH_TOP", 5)
 
@@ -106,7 +106,7 @@ def test_cmd_daily_skips_when_kuluttajaliitto_already_responded(tmp_path, monkey
     monkeypatch.setattr(config, "SCORE_LOG_PATH", score_log_path)
     monkeypatch.setattr(config, "FLAGGED_PATH", flagged_path)
     monkeypatch.setattr(config, "CONTEXT_PATH", context_path)
-    monkeypatch.setattr(config, "NOTIFY_THRESHOLD", 7)
+    monkeypatch.setattr(config, "FLAG_THRESHOLD", 6)
     monkeypatch.setattr(config, "LOG_THRESHOLD", 4)
     monkeypatch.setattr(config, "LAUSUNTOPALVELU_FETCH_TOP", 5)
 

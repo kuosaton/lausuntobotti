@@ -120,7 +120,7 @@ All state lives under `state/`:
 | `seen_proposals.json`        | Proposals already processed (deduplication) |
 | `score_log.jsonl`            | Lausuntopyyntö scoring history              |
 | `valiokunta_score_log.jsonl` | Valiokunta scoring history                  |
-| `nostetut.json`              | Items that crossed the notify threshold     |
+| `nostetut.json`              | Items that crossed the flag threshold       |
 | `seen_documents.json`        | Committee agenda deduplication              |
 
 ### Model configuration (optional)

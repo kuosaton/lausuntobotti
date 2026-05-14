@@ -4,9 +4,8 @@ import argparse
 import json
 import sys
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from datetime import date as date_type
-from datetime import timedelta
 from types import SimpleNamespace
 from typing import TypedDict
 
@@ -199,7 +198,7 @@ def cmd_review_logged(days: int = 7, source: str = _SOURCE_LAUSUNTOPYYNNOT) -> N
         return
 
     print(
-        f"--- LOGGED ({total} items, score {config.LOG_THRESHOLD}-{config.NOTIFY_THRESHOLD - 1}) ---\n"
+        f"--- LOGGED ({total} items, score {config.LOG_THRESHOLD}-{config.FLAG_THRESHOLD - 1}) ---\n"
     )
     for label, entries in sections:
         if not entries:

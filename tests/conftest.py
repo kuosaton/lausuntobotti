@@ -31,7 +31,7 @@ class StatePaths(NamedTuple):
 def state_paths(tmp_path, monkeypatch) -> StatePaths:
     """Create empty state and context files in tmp_path and point config at them.
 
-    Also pins the scoring thresholds (NOTIFY_THRESHOLD=7, LOG_THRESHOLD=4) and the
+    Also pins the scoring thresholds (FLAG_THRESHOLD, LOG_THRESHOLD) and the
     fetch top (5) so tests don't depend on production values. The context starts
     fresh and non-empty so command tests do not accidentally exercise refresh
     behavior unless they opt into it.
@@ -71,7 +71,7 @@ def state_paths(tmp_path, monkeypatch) -> StatePaths:
     monkeypatch.setattr(config, "FLAGGED_PATH", paths.flagged)
     monkeypatch.setattr(config, "CONTEXT_PATH", paths.context)
     monkeypatch.setattr(config, "CONTEXT_MAX_AGE_DAYS", 7)
-    monkeypatch.setattr(config, "NOTIFY_THRESHOLD", 7)
+    monkeypatch.setattr(config, "FLAG_THRESHOLD", 6)
     monkeypatch.setattr(config, "LOG_THRESHOLD", 4)
     monkeypatch.setattr(config, "LAUSUNTOPALVELU_FETCH_TOP", 5)
 
