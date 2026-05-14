@@ -1,0 +1,8 @@
+[scoring]
+model = "claude-haiku-4-5"
+# Sonnet/Opus 4.6+ only. Uncomment with e.g. model = "claude-sonnet-4-6".
+# effort = "medium"
+max_tokens = 500
+timeout_seconds = 45.0
+prompt_cache = true
+cache_ttl = "5m"

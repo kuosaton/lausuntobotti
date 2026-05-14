@@ -1,7 +1,0 @@
-[scoring]
-model = "claude-haiku-4-5"
-# effort = "medium" # sonnet/opus only. uncomment with e.g. model = "claude-sonnet-4-6".
-max_tokens = 300
-timeout_seconds = 45.0
-prompt_cache = true
-cache_ttl = "5m"
