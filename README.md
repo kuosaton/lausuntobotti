@@ -144,3 +144,7 @@ Edit this file to try another [Claude model](https://platform.claude.com/docs/en
 `max_tokens`, timeout, and cache settings are tuning knobs, not required setup. Keep [prompt caching](https://platform.claude.com/docs/en/build-with-claude/prompt-caching) enabled unless you have a reason to disable it.
 
 For deployment-specific overrides, use the optional `CLAUDE_SCORING_*` environment variables shown in `.env.example`; environment variables take precedence over `model_config.toml`.
+
+### System prompt
+
+The scoring rubric and mission framing live in `SYSTEM_PROMPT` in [`processing/llm_scorer.py`](processing/llm_scorer.py). You can edit it to tune what the bot treats as relevant, but compare changes against historical `score_log.jsonl` examples before using them in production; prompt changes affect which items appear in digests.
