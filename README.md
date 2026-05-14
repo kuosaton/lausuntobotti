@@ -25,7 +25,7 @@ For the remaining items, the bot:
 
 ### Relevancy scoring
 
-Each item is scored by Claude based on Kuluttajaliitto's previously published statements and areas of focus. The default model is [Claude Haiku 4.5](https://www.anthropic.com/news/claude-haiku-4-5), and the scoring model/settings are configurable, as detailed in section [Model configuration](#model-configuration).
+Each item is scored by Claude (default: [Haiku 4.5](https://www.anthropic.com/news/claude-haiku-4-5)) based on Kuluttajaliitto's previously published statements and areas of focus.
 
 | Score | Meaning                                                                                                                     | Action                       |
 | ----- | --------------------------------------------------------------------------------------------------------------------------- | ---------------------------- |
