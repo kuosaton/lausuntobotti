@@ -23,11 +23,23 @@ ja eduskunnan valiokunta-asioiden relevanssia Kuluttajaliitolle.
 Saat arvioitavaksi yhden asian otsikon ja kuvauksen. Saat myös tausta-aineistona \
 Kuluttajaliiton verkkosivujen viimeisimmät julkaistut lausunnot.
 
+Kuluttajaliiton tehtävän kannalta olennaista:
+- Kohderyhmät ovat kuluttajat, asukkaat, potilaat ja sote-palveluiden asiakkaat.
+- Työn ytimessä ovat kohderyhmien oikeudet, etu, asema, turvallisuus ja \
+kohtuuhintainen, toimiva ja kestävä arki.
+- Kuluttajaliitto vaikuttaa erityisesti lainsäädäntöön, muuhun sääntelyyn ja \
+täytäntöönpanoon sekä tarjoaa selkeää tietoa ja neuvontaa.
+- Hyvä signaali on konkreettinen vaikutus esimerkiksi kuluttajansuojaan, \
+sopimussuhteisiin, hintoihin ja maksuihin, velkaantumiseen, rahoitus- ja \
+maksupalveluihin, asumiseen, tuoteturvallisuuteen, välttämättömiin palveluihin, \
+digitaalisiin alustoihin, huijauksiin, sote-palveluiden käyttäjien oikeuksiin tai \
+kestävän kuluttamisen käytännön edellytyksiin.
+
 Tehtäväsi:
-1. Arvioi asteikolla 0-10, kuinka relevantti asia on Kuluttajaliitolle
-2. Kirjoita 1-2 lauseen perustelu suomeksi. Viittaa tarvittaessa Kuluttajaliiton \
-aiempiin lausuntoihin tai painopisteisiin.
-3. Nimeä 1-3 asian keskeistä teemaa
+1. Arvioi asteikolla 0-10, kuinka relevantti asia on Kuluttajaliitolle.
+2. Kirjoita 1-2 lauseen perustelu suomeksi. Nimeä konkreettinen kytkös \
+Kuluttajaliiton tehtävään, aiempiin lausuntoihin tai painopisteisiin.
+3. Nimeä 1-3 asian keskeistä teemaa.
 
 Vastaa AINOASTAAN JSON-muodossa, ilman muuta tekstiä:
 {"score": 7, "rationale": "Koskee verkkokaupan kuluttajansuojaa EU-direktiivin \
@@ -35,19 +47,27 @@ toimeenpanossa. Kuluttajaliitto on antanut aiheesta lausuntoja aiemmin.", \
 "themes": ["verkkokauppa", "kuluttajansuoja", "EU-direktiivi"]}
 
 Pisteytysohje:
-- 8-10: Asia on selvästi Kuluttajaliiton ydinaluetta. Liittyy suoraan \
-kuluttajansuojaan, tuoteturvallisuuteen, rahoituspalveluihin, asumiseen tai muuhun \
-aiheeseen, josta Kuluttajaliitto on toistuvasti lausunut.
-- 5-7: Asia koskee kuluttajia epäsuorasti tai sivuaa Kuluttajaliiton painopisteitä, \
-mutta ei ole ydinaluetta.
-- 2-4: Asialla on ohut yhteys kuluttaja-asioihin.
-- 0-1: Ei havaittavaa yhteyttä kuluttajiin tai Kuluttajaliiton toimintaan.
+- 8-10: Asia on selvästi Kuluttajaliiton ydinaluetta ja vaikuttaa suoraan \
+kohderyhmien oikeuksiin, asemaan, turvallisuuteen, palvelujen saatavuuteen tai \
+kohtuuhintaiseen arkeen.
+- 6-7: Asia on relevantti tai läheinen Kuluttajaliiton painopisteille, mutta \
+kuluttaja-, asukas-, potilas- tai sote-asiakasvaikutus on epäsuorempi.
+- 4-5: Asialla on mahdollinen mutta epävarma tai rajallinen yhteys Kuluttajaliiton \
+tehtävään; kirjaa vain tarkempaa ihmisen arviota varten.
+- 2-3: Yhteys on ohut, yleinen tai lähinnä välillinen.
+- 0-1: Ei havaittavaa yhteyttä Kuluttajaliiton kohderyhmiin tai toimintaan.
 
-TÄRKEÄ OHJE: Epävarmoissa tapauksissa anna mieluummin matalampi kuin korkeampi \
-pistemäärä. Kuluttajaliitto saa kutsut kuulemisiin joka tapauksessa virallisia \
-kanavia pitkin, joten yksittäisen asian nostamatta jääminen ei ole kriittistä. \
-Sen sijaan väärät nostot heikentävät työkalun käyttökelpoisuutta. Nosta vain, jos \
-asia on selvästi relevantti.\
+Oikeudellinen ja käytännöllinen varovaisuus:
+- Arvioi vain relevanssia, älä asian oikeudellista lopputulosta tai poliittista \
+kannatettavuutta.
+- Älä nosta asiaa pelkän yleisen yhteiskunnallisen merkityksen, hallinnollisen \
+kiinnostavuuden tai toimialavaikutuksen vuoksi. Tarvitaan konkreettinen kytkös \
+Kuluttajaliiton kohderyhmiin.
+- Jos kuvaus ei anna riittävää tietoa vaikutuksesta kohderyhmiin, anna mieluummin \
+matalampi pistemäärä ja sano perustelussa, mikä kytkös jäi epäselväksi.
+- Kuluttajaliitto saa kutsut kuulemisiin joka tapauksessa virallisia kanavia pitkin. \
+Väärät nostot heikentävät työkalun käyttökelpoisuutta, joten nosta vain, jos asia \
+on selvästi relevantti.\
 """
 
 

@@ -49,6 +49,17 @@ def test_format_statements_includes_tags_when_present() -> None:
     assert "Teemat: asuminen, energia" in text
 
 
+def test_system_prompt_keeps_mission_and_noise_guardrails() -> None:
+    prompt = llm_scorer.SYSTEM_PROMPT
+
+    assert "kuluttajat, asukkaat, potilaat ja sote-palveluiden asiakkaat" in prompt
+    assert "kohtuuhintainen, toimiva ja kestävä arki" in prompt
+    assert "Nimeä konkreettinen kytkös" in prompt
+    assert "älä asian oikeudellista lopputulosta" in prompt
+    assert "pelkän yleisen yhteiskunnallisen merkityksen" in prompt
+    assert "Väärät nostot heikentävät työkalun käyttökelpoisuutta" in prompt
+
+
 def test_score_item_ignores_jakelu_signal(monkeypatch) -> None:
     captured: dict = {}
 
