@@ -70,16 +70,20 @@ uv sync               # runtime dependencies only
 uv sync --extra dev   # include dev tools (pytest, ruff, pyright, pre-commit)
 ```
 
-`uv sync` creates a `.venv/` directory in the project root. All examples in this README use `uv run`. If you prefer, activate the venv and run commands directly:
+A `.venv` (virtual environment) directory is created in the project root. Activate it:
 
 ```bash
 source .venv/bin/activate     # macOS/Linux
 .venv\Scripts\activate        # Windows (PowerShell or cmd)
 ```
 
-With the venv active, `python main.py`, `pytest`, `ruff`, etc. work directly without `uv run`.
+All command examples from now on assume that venv has been activated.
+
+_With venv active, `python main.py`, `pytest`, `ruff`, etc. work directly without `uv run`. If you prefer, you may use the same commands without activating venv by using the `uv run` prefix instead._
 
 #### 2. Configure the environment
+
+Copy .env file
 
 ```bash
 cp .env.example .env
@@ -87,64 +91,27 @@ cp .env.example .env
 
 Edit `.env` with your values:
 
-| Variable            | Description                                             |
-| ------------------- | ------------------------------------------------------- |
-| `ANTHROPIC_API_KEY` | Anthropic API key                                       |
-| `RESEND_API_KEY`    | Resend API key for email sending                        |
-| `SENDER_EMAIL`      | From address (must be on a domain verified with Resend) |
-| `RECIPIENT_EMAIL`   | Comma-separated recipient addresses for digests         |
+| Variable            | Description                                               |
+| ------------------- | --------------------------------------------------------- |
+| `ANTHROPIC_API_KEY` | Anthropic API key                                         |
+| `RESEND_API_KEY`    | Resend API key for email sending                          |
+| `SENDER_EMAIL`      | Sender address (must be on a domain verified with Resend) |
+| `RECIPIENT_EMAIL`   | Comma-separated recipient addresses for digests           |
 
-#### Model configuration
+#### 3. Use the tool
 
-Scoring defaults live in [`model_config.toml`](model_config.toml):
-
-```toml
-[scoring]
-model = "claude-haiku-4-5"
-max_tokens = 300
-timeout_seconds = 45.0
-prompt_cache = true
-cache_ttl = "5m"
-```
-
-Edit this file for normal local experimentation. For deployment-specific overrides, set the optional `CLAUDE_SCORING_*` environment variables shown in `.env.example`; environment variables take precedence over `model_config.toml`.
-
-Haiku 4.5 is the default because Lausuntobotti does high-volume, short, structured relevance scoring. Sonnet 4.6 is a useful candidate for ambiguous or borderline items, but compare it against historical score log examples before switching globally. `max_tokens`, timeout, and cache settings are tuning knobs, not required setup.
-
-#### 3. Fetch up-to-date Kuluttajaliitto published statements context
+Use the interactive command line (CLI) interface:
 
 ```bash
-uv run python main.py --update-context
+python main.py
 ```
 
-Checks also refresh this context automatically when it is missing or older than 7 days.
+Use `h` in the menu for the full list of options.
 
-### Using the tool
-
-Run the interactive menu:
+You may also use the tool through direct CLI commands. For the full list of commands, use:
 
 ```bash
-uv run python main.py
-```
-
-Use `h` in the menu, or `--help` on the command line, for the full list of options.
-
-Direct CLI examples:
-
-```bash
-# Lausuntopyyntö check: score new proposals and send the digest if any clear the threshold
-uv run python main.py --lausuntopyynnot
-uv run python main.py --lausuntopyynnot --dry-run    # score and log, but don't send
-
-# Valiokunta check: score new agenda matters and send the committee digest
-uv run python main.py --valiokunta
-uv run python main.py --valiokunta --dry-run
-
-# Review borderline items from one or both logs
-uv run python main.py --review-logged --source both --days 7
-
-# Full list of commands: refresh context, preview or resend lausuntopyyntö digests, reset state
-uv run python main.py --help
+python main.py --help
 ```
 
 ### Valiokunta Analysis
@@ -182,3 +149,25 @@ All state lives under `state/`:
 | `valiokunta_score_log.jsonl` | Valiokunta scoring history                  |
 | `nostetut.json`              | Items that crossed the notify threshold     |
 | `seen_documents.json`        | Committee agenda deduplication              |
+
+### Extra: Model configuration
+
+The scoring model configuration is located in [`model_config.toml`](model_config.toml), with the defaults being:
+
+```toml
+[scoring]
+model = "claude-haiku-4-5"
+max_tokens = 300
+timeout_seconds = 45.0
+prompt_cache = true
+cache_ttl = "5m"
+```
+
+You may edit this file to experiment with different configurations, such as using a different [Claude model](https://platform.claude.com/docs/en/about-claude/models/overview):
+
+- Haiku 4.5 is used by default because Lausuntobotti does high-volume, short, and structured relevance scoring, for which the model's speed and cost-effectiveness are particularly suited for.
+- Sonnet 4.6 could be a useful candidate for ambiguous or borderline items, but introduces increased costs. Compare it against historical score log examples before switching globally.
+
+`max_tokens`, timeout, and cache settings are tuning knobs, not required setup nor something you may need to touch at all. [Prompt caching](https://platform.claude.com/docs/en/build-with-claude/prompt-caching), for example, "significantly reduces processing time and costs for repetitive tasks or prompts with consistent elements", and is highly recommended to be kept enabled for optimized API usage.
+
+For deployment-specific overrides, you may the optional `CLAUDE_SCORING_*` environment variables shown in `.env.example`; environment variables take precedence over `model_config.toml`.
