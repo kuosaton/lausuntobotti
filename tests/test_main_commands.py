@@ -281,6 +281,43 @@ def test_cmd_daily_non_dry_run_sends_email(state_paths, monkeypatch) -> None:
     assert calls["subject"].startswith("Uusia lausuntopyyntöjä")
 
 
+def test_cmd_daily_send_failure_does_not_mark_notified(state_paths, monkeypatch, capsys) -> None:
+    proposal = Proposal(
+        id="send-fail-1",
+        title="Lahetys epaonnistuu",
+        organization_name="Testi",
+        abstract="Kuvaus",
+        deadline=datetime.now(main.UTC) + timedelta(days=3),
+        published_on=datetime.now(main.UTC),
+        url="https://example.invalid/p/send-fail-1",
+    )
+
+    monkeypatch.setattr(main, "fetch_recent", lambda client, top: [proposal])
+    monkeypatch.setattr(main, "get_participation_flags", lambda client, pid, name: (False, False))
+    monkeypatch.setattr(
+        main,
+        "score_item",
+        lambda *args, **kwargs: {"score": 8, "rationale": "OK", "themes": []},
+    )
+
+    def _raise_send(*args, **kwargs):
+        raise RuntimeError("resend down")
+
+    monkeypatch.setattr(main, "send_email", _raise_send)
+
+    main.cmd_daily(dry_run=False)
+
+    captured = capsys.readouterr()
+    assert "ERROR: email delivery failed: resend down" in captured.err
+    assert "Email sent to" not in captured.out
+
+    seen = json.loads(state_paths.seen.read_text(encoding="utf-8"))
+    assert seen["send-fail-1"]["notified"] is False
+    assert seen["send-fail-1"]["notified_at"] is None
+    log_entry = json.loads(state_paths.score_log.read_text(encoding="utf-8").splitlines()[0])
+    assert log_entry["notified"] is False
+
+
 def test_cmd_daily_declined_send_does_not_mark_notified(state_paths, monkeypatch) -> None:
 
     proposal = Proposal(

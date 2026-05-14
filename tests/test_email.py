@@ -17,16 +17,66 @@ def test_send_email_uses_resend(monkeypatch) -> None:
         return {"id": "fake-id-123"}
 
     monkeypatch.setattr(resend.Emails, "send", staticmethod(fake_send))
+    monkeypatch.setenv("RESEND_API_KEY", "re_test_key")
     monkeypatch.setenv("SENDER_EMAIL", "botti@example.com")
     monkeypatch.setenv("RECIPIENT_EMAIL", "vastaanottaja@example.com")
 
-    email_mod.send_email(subject="Testisubject", html_body="<p>Hei</p>", text_body="Hei")
+    email_id = email_mod.send_email(subject="Testisubject", html_body="<p>Hei</p>", text_body="Hei")
 
+    assert email_id == "fake-id-123"
+    assert resend.api_key == "re_test_key"
     assert captured["from"] == "botti@example.com"
     assert captured["to"] == ["vastaanottaja@example.com"]
     assert captured["subject"] == "Testisubject"
     assert captured["html"] == "<p>Hei</p>"
     assert captured["text"] == "Hei"
+
+
+def test_send_email_requires_configuration(monkeypatch) -> None:
+    monkeypatch.delenv("RESEND_API_KEY", raising=False)
+    monkeypatch.delenv("SENDER_EMAIL", raising=False)
+    monkeypatch.delenv("RECIPIENT_EMAIL", raising=False)
+
+    try:
+        email_mod.send_email(subject="S", html_body="<p>H</p>", text_body="T")
+    except ValueError as exc:
+        assert "RESEND_API_KEY" in str(exc)
+    else:
+        raise AssertionError("send_email should reject missing API key")
+
+    monkeypatch.setenv("RESEND_API_KEY", "re_test_key")
+    try:
+        email_mod.send_email(subject="S", html_body="<p>H</p>", text_body="T")
+    except ValueError as exc:
+        assert "SENDER_EMAIL" in str(exc)
+    else:
+        raise AssertionError("send_email should reject missing sender")
+
+    monkeypatch.setenv("SENDER_EMAIL", "botti@example.com")
+    try:
+        email_mod.send_email(subject="S", html_body="<p>H</p>", text_body="T")
+    except ValueError as exc:
+        assert "RECIPIENT_EMAIL" in str(exc)
+    else:
+        raise AssertionError("send_email should reject missing recipients")
+
+
+def test_send_email_propagates_provider_failure(monkeypatch) -> None:
+    monkeypatch.setenv("RESEND_API_KEY", "re_test_key")
+    monkeypatch.setenv("SENDER_EMAIL", "botti@example.com")
+    monkeypatch.setenv("RECIPIENT_EMAIL", "vastaanottaja@example.com")
+
+    def fake_send(_params):
+        raise RuntimeError("provider down")
+
+    monkeypatch.setattr(resend.Emails, "send", staticmethod(fake_send))
+
+    try:
+        email_mod.send_email(subject="S", html_body="<p>H</p>", text_body="T")
+    except RuntimeError as exc:
+        assert "provider down" in str(exc)
+    else:
+        raise AssertionError("send_email should propagate provider failure")
 
 
 def test_build_daily_digest_contains_key_fields() -> None:

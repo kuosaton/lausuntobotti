@@ -60,10 +60,20 @@ def _footer_html() -> str:
     )
 
 
-def send_email(subject: str, html_body: str, text_body: str = "") -> None:
-    resend.api_key = os.environ.get("RESEND_API_KEY")
-    sender_email = os.environ.get("SENDER_EMAIL", "")
+def send_email(subject: str, html_body: str, text_body: str = "") -> str:
+    api_key = os.environ.get("RESEND_API_KEY", "").strip()
+    if not api_key:
+        raise ValueError("RESEND_API_KEY is required")
+
+    sender_email = os.environ.get("SENDER_EMAIL", "").strip()
+    if not sender_email:
+        raise ValueError("SENDER_EMAIL is required")
+
     recipients = [a.strip() for a in os.environ.get("RECIPIENT_EMAIL", "").split(",") if a.strip()]
+    if not recipients:
+        raise ValueError("RECIPIENT_EMAIL must include at least one recipient")
+
+    resend.api_key = api_key
 
     params: resend.Emails.SendParams = {
         "from": sender_email,
@@ -73,13 +83,11 @@ def send_email(subject: str, html_body: str, text_body: str = "") -> None:
         "text": text_body,
     }
 
-    try:
-        result = resend.Emails.send(params)
-        print("Email sent successfully!")
-        print(f"Email ID: {result['id']}")
-
-    except Exception as e:
-        print(f"Error sending email: {e}")
+    result = resend.Emails.send(params)
+    email_id = result.get("id")
+    if not isinstance(email_id, str) or not email_id:
+        raise ValueError("Resend response did not include an email id")
+    return email_id
 
 
 # ---------------------------------------------------------------------------

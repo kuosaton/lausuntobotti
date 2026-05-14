@@ -104,6 +104,7 @@ def test_send_email_reads_env_defaults_at_call_time(monkeypatch) -> None:
 
 
 def test_send_email_supports_multiple_recipients(monkeypatch) -> None:
+    monkeypatch.setenv("RESEND_API_KEY", "re_test_key")
     monkeypatch.setenv("SENDER_EMAIL", "sender@example.com")
     monkeypatch.setenv("RECIPIENT_EMAIL", "a@example.com, b@example.com , c@example.com")
 

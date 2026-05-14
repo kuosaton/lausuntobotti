@@ -287,7 +287,11 @@ def _deliver_digest(
     if answer not in ("", "y"):
         print("Aborted.")
         return False
-    send_email(subject=subject, html_body=html_body, text_body=text_body)
+    try:
+        send_email(subject=subject, html_body=html_body, text_body=text_body)
+    except Exception as exc:
+        print(f"ERROR: email delivery failed: {exc}", file=sys.stderr)
+        return False
     print(f"Email sent to {recipient}")
     return True
 
@@ -515,7 +519,11 @@ def _deliver_weekly(
         print("Aborted.")
         return False
 
-    send_email(subject=subject, html_body=html_body, text_body=text_body)
+    try:
+        send_email(subject=subject, html_body=html_body, text_body=text_body)
+    except Exception as exc:
+        print(f"ERROR: email delivery failed: {exc}", file=sys.stderr)
+        return False
     print(f"\nWeekly digest sent: {total_flagged} flagged, {total_logged} logged")
     return True
 
