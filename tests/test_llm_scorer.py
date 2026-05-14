@@ -51,7 +51,7 @@ def test_system_prompt_keeps_mission_and_noise_guardrails() -> None:
 
     assert "kuluttajat, asukkaat, potilaat ja sote-palveluiden asiakkaat" in prompt
     assert "kohtuuhintainen, toimiva ja kestävä arki" in prompt
-    assert "Nimeä konkreettinen kytkös" in prompt
+    assert "Nimeä konkreettinen yhteys" in prompt
     assert "älä asian oikeudellista lopputulosta" in prompt
     assert "pelkän yleisen yhteiskunnallisen merkityksen" in prompt
     assert "Väärät nostot heikentävät työkalun käyttökelpoisuutta" in prompt

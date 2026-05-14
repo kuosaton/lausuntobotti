@@ -37,7 +37,7 @@ kestävän kuluttamisen käytännön edellytyksiin.
 
 Tehtäväsi:
 1. Arvioi asteikolla 0-10, kuinka relevantti asia on Kuluttajaliitolle.
-2. Kirjoita 1-2 lauseen perustelu suomeksi. Nimeä konkreettinen kytkös \
+2. Kirjoita 1-2 lauseen perustelu suomeksi. Nimeä konkreettinen yhteys \
 Kuluttajaliiton tehtävään, aiempiin lausuntoihin tai painopisteisiin.
 3. Nimeä 1-3 asian keskeistä teemaa.
 
@@ -61,10 +61,10 @@ Oikeudellinen ja käytännöllinen varovaisuus:
 - Arvioi vain relevanssia, älä asian oikeudellista lopputulosta tai poliittista \
 kannatettavuutta.
 - Älä nosta asiaa pelkän yleisen yhteiskunnallisen merkityksen, hallinnollisen \
-kiinnostavuuden tai toimialavaikutuksen vuoksi. Tarvitaan konkreettinen kytkös \
+kiinnostavuuden tai toimialavaikutuksen vuoksi. Tarvitaan konkreettinen yhteys \
 Kuluttajaliiton kohderyhmiin.
 - Jos kuvaus ei anna riittävää tietoa vaikutuksesta kohderyhmiin, anna mieluummin \
-matalampi pistemäärä ja sano perustelussa, mikä kytkös jäi epäselväksi.
+matalampi pistemäärä ja sano perustelussa, mikä yhteys jäi epäselväksi.
 - Kuluttajaliitto saa kutsut kuulemisiin joka tapauksessa virallisia kanavia pitkin. \
 Väärät nostot heikentävät työkalun käyttökelpoisuutta, joten nosta vain, jos asia \
 on selvästi relevantti.\
