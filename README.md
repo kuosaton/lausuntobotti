@@ -48,11 +48,11 @@ All data comes from publicly accessible sources:
 Prerequisites:
 
 - [uv](https://docs.astral.sh/uv/getting-started/installation/)
-- [Python 3.14](https://docs.astral.sh/uv/guides/install-python/) (uv can use an existing installation, or, if there are none, automatically install one.)
+- [Python 3.14](https://docs.astral.sh/uv/guides/install-python/) (uv can use an existing installation or automatically install one if missing.)
 
 ### Setup
 
-Download the [latest release](https://github.com/kuosaton/lausuntobotti/releases/latest), extract the compressed files, and navigate into the `lausuntobotti/` root directory. Then:
+Download the [latest release](https://github.com/kuosaton/lausuntobotti/releases/latest), extract the compressed files, and navigate into `lausuntobotti/`. Then:
 
 #### 1. Configure the environment
 
@@ -84,6 +84,8 @@ Direct commands are listed with:
 ```bash
 uv run python main.py --help
 ```
+
+`uv run` works without activating a virtual environment. If you prefer an activated shell, run `uv sync` first, activate `.venv`, and then use the same commands without the `uv run` prefix.
 
 ### Valiokunta Analysis
 
