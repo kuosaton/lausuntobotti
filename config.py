@@ -13,7 +13,7 @@ LOG_THRESHOLD = 4
 
 # How many proposals to fetch per lausuntopyyntö run (sorted newest-first).
 # High enough to cover the full backlog on first run; deduplication handles the rest.
-LAUSUNTOPALVELU_FETCH_TOP = 200
+LAUSUNTOPALVELU_FETCH_TOP = 100
 CONTEXT_MAX_AGE_DAYS = 7
 
 # Paths
@@ -45,7 +45,7 @@ class ScoringConfig:
 
 _DEFAULT_SCORING_CONFIG = ScoringConfig(
     model="claude-haiku-4-5",
-    max_tokens=300,
+    max_tokens=500,
     effort=None,
     timeout_seconds=45.0,
     prompt_cache=True,

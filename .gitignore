@@ -18,6 +18,7 @@ ENV/
 # Environment files
 .env
 .envrc
+model_config.toml
 
 # Tool caches and reports
 .pytest_cache/

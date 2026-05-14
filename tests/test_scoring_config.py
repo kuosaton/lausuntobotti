@@ -7,17 +7,27 @@ import pytest
 import config
 
 
-def test_load_scoring_config_reads_committed_defaults() -> None:
-    scoring_config = config.load_scoring_config(environ={})
+def test_load_scoring_config_uses_builtin_defaults_when_toml_missing(tmp_path) -> None:
+    scoring_config = config.load_scoring_config(tmp_path / "missing.toml", environ={})
 
     assert scoring_config == config.ScoringConfig(
         model="claude-haiku-4-5",
-        max_tokens=300,
+        max_tokens=500,
         effort=None,
         timeout_seconds=45.0,
         prompt_cache=True,
         cache_ttl="5m",
     )
+
+
+def test_example_model_config_matches_builtin_defaults(tmp_path) -> None:
+    builtin_defaults = config.load_scoring_config(tmp_path / "missing.toml", environ={})
+    example_config = config.load_scoring_config(
+        config.ROOT / "model_config.example.toml",
+        environ={},
+    )
+
+    assert example_config == builtin_defaults
 
 
 def test_load_scoring_config_env_overrides_toml(tmp_path) -> None:
@@ -27,7 +37,7 @@ def test_load_scoring_config_env_overrides_toml(tmp_path) -> None:
             """
             [scoring]
             model = "claude-haiku-4-5"
-            max_tokens = 300
+            max_tokens = 500
             effort = "medium"
             timeout_seconds = 45.0
             prompt_cache = true

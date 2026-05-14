@@ -125,14 +125,15 @@ All state lives under `state/`:
 
 ### Model configuration (optional)
 
-Defaults live in [`model_config.toml`](model_config.toml):
+Built-in defaults work without a config file. To customize them locally, copy
+[`model_config.example.toml`](model_config.example.toml) to `model_config.toml`:
 
 ```toml
 [scoring]
 model = "claude-haiku-4-5"
 # Sonnet/Opus 4.6+ only. Uncomment with e.g. model = "claude-sonnet-4-6".
 # effort = "medium"
-max_tokens = 300
+max_tokens = 500
 timeout_seconds = 45.0
 prompt_cache = true
 cache_ttl = "5m"
@@ -145,7 +146,7 @@ Edit this file to try another [Claude model](https://platform.claude.com/docs/en
 
 `effort` is optional and is only sent when configured; use it with supported Sonnet/Opus models, such as `effort = "medium"` for Sonnet 4.6. `max_tokens`, timeout, and cache settings are tuning knobs, not required setup. Keep [prompt caching](https://platform.claude.com/docs/en/build-with-claude/prompt-caching) enabled unless you have a reason to disable it.
 
-For deployment-specific overrides, use the optional `CLAUDE_SCORING_*` environment variables shown in `.env.example`; environment variables take precedence over `model_config.toml`.
+`model_config.toml` is ignored by Git so local model experiments do not get committed accidentally. For deployment-specific overrides, use the optional `CLAUDE_SCORING_*` environment variables shown in `.env.example`; environment variables take precedence over `model_config.toml`.
 
 ### System prompt
 
