@@ -628,7 +628,13 @@ def _read_borderline_entries(days: int = 7, source: str = _SOURCE_LAUSUNTOPYYNNO
             except json.JSONDecodeError:
                 continue
             score = entry.get("score", 0)
-            ts = datetime.fromisoformat(entry["timestamp"].rstrip("Z")).replace(tzinfo=UTC)
+            timestamp = entry.get("timestamp")
+            if not isinstance(timestamp, str):
+                continue
+            try:
+                ts = datetime.fromisoformat(timestamp.rstrip("Z")).replace(tzinfo=UTC)
+            except ValueError:
+                continue
             if ts.timestamp() < cutoff:
                 continue
             if config.LOG_THRESHOLD <= score < config.NOTIFY_THRESHOLD:
@@ -1007,7 +1013,11 @@ def cmd_interactive() -> None:
         if action is None:
             print(help_text)
             continue
-        action()
+        try:
+            action()
+        # Keep the interactive menu alive when a selected command fails.
+        except Exception as exc:
+            print(f"[ERROR] {exc}", file=sys.stderr)
         print(menu_text)
 
 

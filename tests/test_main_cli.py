@@ -188,6 +188,23 @@ def test_interactive_menu_invalid_choice(monkeypatch) -> None:
     main.main()
 
 
+def test_interactive_menu_reports_action_error_and_continues(monkeypatch, capsys) -> None:
+    _stub_dispatchable(monkeypatch)
+
+    def _raise():
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(main, "cmd_update_context", _raise)
+    monkeypatch.setattr("builtins.input", _menu_input(["6", "0"]))
+    monkeypatch.setattr("sys.argv", ["main.py"])
+
+    main.main()
+
+    captured = capsys.readouterr()
+    assert "[ERROR] boom" in captured.err
+    assert captured.out.count("Lausuntobotti") == 2
+
+
 def test_cmd_interactive_handles_keyboard_interrupt(monkeypatch) -> None:
     def _raise(_prompt):
         raise KeyboardInterrupt

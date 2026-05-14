@@ -72,6 +72,31 @@ def test_cmd_review_logged_skips_blank_and_invalid_json(state_paths, capsys) -> 
     assert "No borderline items" in out
 
 
+def test_cmd_review_logged_skips_missing_and_invalid_timestamps(state_paths, capsys) -> None:
+    state_paths.score_log.write_text(
+        "\n".join(
+            [
+                json.dumps({"title": "Missing timestamp", "score": 5, "rationale": "R"}),
+                json.dumps(
+                    {
+                        "timestamp": "not-a-date",
+                        "title": "Invalid timestamp",
+                        "score": 5,
+                        "rationale": "R",
+                    }
+                ),
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    main.cmd_review_logged(days=7)
+    out = capsys.readouterr().out
+    assert "No borderline items" in out
+    assert "Missing timestamp" not in out
+    assert "Invalid timestamp" not in out
+
+
 def test_cmd_preview_digest_empty(state_paths, capsys) -> None:
     state_paths.flagged.write_text("[ ]", encoding="utf-8")
     # score log is empty from fixture — no borderline either
