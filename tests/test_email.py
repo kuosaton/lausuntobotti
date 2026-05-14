@@ -308,3 +308,67 @@ def test_build_weekly_digest_renders_borderline_items() -> None:
     assert "Ei nostettavia asioita." not in text_body
     assert "Rajatapaus" in html_body
     assert "energia" in html_body
+
+
+def test_build_weekly_digest_sorts_items_by_score_descending() -> None:
+    committee_items = {
+        "talousvaliokunta": [
+            {
+                "eduskuntatunnus": "HE 61/2026 vp",
+                "title": "Seitsemän pisteen asia",
+                "score": 7,
+                "rationale": "Relevantti.",
+                "themes": [],
+                "url": "",
+            },
+            {
+                "eduskuntatunnus": "HE 47/2026 vp",
+                "title": "Kymmenen pisteen asia",
+                "score": 10,
+                "rationale": "Erittäin relevantti.",
+                "themes": [],
+                "url": "",
+            },
+            {
+                "eduskuntatunnus": "HE 41/2026 vp",
+                "title": "Kuuden pisteen asia",
+                "score": 6,
+                "rationale": "Melko relevantti.",
+                "themes": [],
+                "url": "",
+            },
+        ]
+    }
+    borderline_items = {
+        "talousvaliokunta": [
+            {
+                "eduskuntatunnus": "HE 83/2026 vp",
+                "title": "Neljän pisteen asia",
+                "score": 4,
+                "rationale": "Välillinen yhteys.",
+                "themes": [],
+                "url": "",
+            },
+            {
+                "eduskuntatunnus": "HE 84/2026 vp",
+                "title": "Viiden pisteen asia",
+                "score": 5,
+                "rationale": "Mahdollinen yhteys.",
+                "themes": [],
+                "url": "",
+            },
+        ]
+    }
+
+    _subject, html_body, text_body = email_mod.build_weekly_digest(
+        committee_items=committee_items,
+        week_number=17,
+        total_scored=5,
+        total_logged=2,
+        borderline_items=borderline_items,
+    )
+
+    assert text_body.index("Kymmenen pisteen asia") < text_body.index("Seitsemän pisteen asia")
+    assert text_body.index("Seitsemän pisteen asia") < text_body.index("Kuuden pisteen asia")
+    assert text_body.index("Viiden pisteen asia") < text_body.index("Neljän pisteen asia")
+    assert html_body.index("Kymmenen pisteen asia") < html_body.index("Seitsemän pisteen asia")

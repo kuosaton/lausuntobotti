@@ -102,6 +102,10 @@ def _sort_items(items: list[dict]) -> list[dict]:
     )
 
 
+def _sort_weekly_items(items: list[dict]) -> list[dict]:
+    return sorted(items, key=lambda item: -item["score"])
+
+
 class _EntryFields(TypedDict):
     title: str
     organization: str
@@ -376,6 +380,10 @@ def build_weekly_digest(
 ) -> tuple[str, str, str]:
     subject = f"Lausuntobotin viikkokatsaus, vko {week_number}"
     borderline_items = borderline_items or {key: [] for key in committee_items}
+    committee_items = {key: _sort_weekly_items(items) for key, items in committee_items.items()}
+    borderline_items = {
+        key: _sort_weekly_items(borderline_items.get(key, [])) for key in committee_items
+    }
     total_flagged = sum(len(v) for v in committee_items.values())
     summary_lines, summary_html = _weekly_summary(total_scored, total_flagged, total_logged)
     text_body = _weekly_text_body(
