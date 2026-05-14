@@ -28,6 +28,7 @@ from clients.kuluttajaliitto import build_context, fetch_statements
 from clients.lausuntopalvelu import Proposal, fetch_recent, get_participation_flags
 from delivery.email import build_daily_digest, build_weekly_digest, send_email
 from processing.llm_scorer import score_item
+from processing.score_classification import classify_score
 
 load_dotenv()
 
@@ -328,10 +329,11 @@ def _score_lausuntopyynto_proposals(
             score = result["score"]
             scored_results.append((p, result))
 
-            if score >= config.NOTIFY_THRESHOLD:
+            band = classify_score(score)
+            if band == "flag":
                 print(f"  [FLAG {score}/10] {p.title}")
                 flagged.append({"proposal": p, **result})
-            elif score >= config.LOG_THRESHOLD:
+            elif band == "log":
                 print(f"  [LOG {score}/10] {p.title}")
                 borderline.append({"proposal": p, **result})
             else:
@@ -346,9 +348,9 @@ def _record_lausuntopyynto_results(
     seen: dict,
 ) -> None:
     for p, result in scored_results:
-        notified = result["score"] >= config.NOTIFY_THRESHOLD and digest_sent
+        notified = classify_score(result["score"]) == "flag" and digest_sent
         _record_result(p, result, notified, seen)
-        if result["score"] >= config.NOTIFY_THRESHOLD:
+        if classify_score(result["score"]) == "flag":
             flagged_entry = _build_scored_entry(p, result, datetime.now(UTC).isoformat())
             _append_flagged(flagged_entry)
 
@@ -572,7 +574,8 @@ def cmd_valiokunta(dry_run: bool) -> None:
             total_scored += 1
             scored_matters.append((agenda.edktunnus, committee_key, matter, result))
 
-            if score >= config.NOTIFY_THRESHOLD:
+            band = classify_score(score)
+            if band == "flag":
                 print(f"  [FLAG {score}/10] {matter.eduskuntatunnus}: {matter.title}")
                 committee_items[committee_key].append(
                     {
@@ -584,7 +587,7 @@ def cmd_valiokunta(dry_run: bool) -> None:
                         "url": "",
                     }
                 )
-            elif score >= config.LOG_THRESHOLD:
+            elif band == "log":
                 total_logged += 1
                 print(f"  [LOG {score}/10] {matter.eduskuntatunnus}: {matter.title}")
                 borderline_items[committee_key].append(
@@ -604,7 +607,7 @@ def cmd_valiokunta(dry_run: bool) -> None:
         committee_items, borderline_items, total_scored, total_logged, dry_run
     )
     for agenda_id, committee_key, matter, result in scored_matters:
-        notified = result["score"] >= config.NOTIFY_THRESHOLD and digest_sent
+        notified = classify_score(result["score"]) == "flag" and digest_sent
         _record_weekly_matter(matter, committee_key, result, notified)
         seen_docs[agenda_id]["matter_scores"][matter.eduskuntatunnus] = {
             "score": result["score"],
@@ -645,7 +648,7 @@ def _read_borderline_entries(days: int = 7, source: str = _SOURCE_LAUSUNTOPYYNNO
                 continue
             if ts.timestamp() < cutoff:
                 continue
-            if config.LOG_THRESHOLD <= score < config.NOTIFY_THRESHOLD:
+            if classify_score(score) == "log":
                 entries.append(entry)
     return entries
 
