@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from types import SimpleNamespace
-from typing import Any, Literal
+from typing import Any
 
 import pytest
 from hypothesis import given, settings
@@ -10,22 +11,18 @@ from hypothesis import strategies as st
 
 from processing import llm_scorer
 
+_DEFAULT_SCORING_CONFIG = llm_scorer.ScoringConfig(
+    model="claude-haiku-4-5",
+    max_tokens=300,
+    effort=None,
+    timeout_seconds=45.0,
+    prompt_cache=True,
+    cache_ttl="5m",
+)
 
-def _scoring_config(
-    *,
-    model: str = "claude-haiku-4-5",
-    max_tokens: int = 300,
-    timeout_seconds: float = 45.0,
-    prompt_cache: bool = True,
-    cache_ttl: Literal["5m", "1h"] = "5m",
-) -> llm_scorer.ScoringConfig:
-    return llm_scorer.ScoringConfig(
-        model=model,
-        max_tokens=max_tokens,
-        timeout_seconds=timeout_seconds,
-        prompt_cache=prompt_cache,
-        cache_ttl=cache_ttl,
-    )
+
+def _scoring_config(**changes: Any) -> llm_scorer.ScoringConfig:
+    return replace(_DEFAULT_SCORING_CONFIG, **changes)
 
 
 def test_format_statements_includes_excerpt_when_present() -> None:
@@ -115,6 +112,27 @@ def test_score_item_uses_configured_model_parameters(monkeypatch) -> None:
     assert captured["model"] == "claude-sonnet-4-6"
     assert captured["max_tokens"] == 500
     assert captured["timeout"] == 60.0
+    assert "output_config" not in captured
+
+
+def test_score_item_uses_configured_effort(monkeypatch) -> None:
+    captured: dict = {}
+
+    def fake_create(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(content=[SimpleNamespace(text='{"score": 6, "rationale": "ok"}')])
+
+    fake_client = SimpleNamespace(messages=SimpleNamespace(create=fake_create))
+    monkeypatch.setattr(llm_scorer, "_get_client", lambda: fake_client)
+    monkeypatch.setattr(
+        llm_scorer,
+        "load_scoring_config",
+        lambda: _scoring_config(model="claude-sonnet-4-6", effort="medium"),
+    )
+
+    llm_scorer.score_item("A", "B", "src", {"recent_statements": []})
+
+    assert captured["output_config"] == {"effort": "medium"}
 
 
 def test_score_item_adds_cache_controls_when_enabled(monkeypatch) -> None:

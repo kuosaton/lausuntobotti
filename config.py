@@ -37,6 +37,7 @@ SCORING_CONFIG_PATH = ROOT / "model_config.toml"
 class ScoringConfig:
     model: str
     max_tokens: int
+    effort: Literal["low", "medium", "high", "xhigh", "max"] | None
     timeout_seconds: float
     prompt_cache: bool
     cache_ttl: Literal["5m", "1h"]
@@ -45,11 +46,13 @@ class ScoringConfig:
 _DEFAULT_SCORING_CONFIG = ScoringConfig(
     model="claude-haiku-4-5",
     max_tokens=300,
+    effort=None,
     timeout_seconds=45.0,
     prompt_cache=True,
     cache_ttl="5m",
 )
 _CACHE_TTLS = {"5m", "1h"}
+_EFFORT_LEVELS = {"low", "medium", "high", "xhigh", "max"}
 _TRUE_VALUES = {"1", "true", "yes", "on"}
 _FALSE_VALUES = {"0", "false", "no", "off"}
 
@@ -121,6 +124,22 @@ def _cache_ttl_setting(name: str, value: object) -> Literal["5m", "1h"]:
     return cast(Literal["5m", "1h"], normalized)
 
 
+def _effort_setting(
+    name: str,
+    value: object,
+) -> Literal["low", "medium", "high", "xhigh", "max"] | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"{name} must be one of: low, medium, high, xhigh, max")
+    normalized = value.strip().lower()
+    if normalized in {"", "none"}:
+        return None
+    if normalized not in _EFFORT_LEVELS:
+        raise ValueError(f"{name} must be one of: low, medium, high, xhigh, max")
+    return cast(Literal["low", "medium", "high", "xhigh", "max"], normalized)
+
+
 def load_scoring_config(
     path: Path = SCORING_CONFIG_PATH,
     environ: Mapping[str, str] | None = None,
@@ -129,6 +148,7 @@ def load_scoring_config(
     values: dict[str, object] = {
         "model": _DEFAULT_SCORING_CONFIG.model,
         "max_tokens": _DEFAULT_SCORING_CONFIG.max_tokens,
+        "effort": _DEFAULT_SCORING_CONFIG.effort,
         "timeout_seconds": _DEFAULT_SCORING_CONFIG.timeout_seconds,
         "prompt_cache": _DEFAULT_SCORING_CONFIG.prompt_cache,
         "cache_ttl": _DEFAULT_SCORING_CONFIG.cache_ttl,
@@ -138,6 +158,7 @@ def load_scoring_config(
     env_overrides = {
         "CLAUDE_SCORING_MODEL": "model",
         "CLAUDE_SCORING_MAX_TOKENS": "max_tokens",
+        "CLAUDE_SCORING_EFFORT": "effort",
         "CLAUDE_SCORING_TIMEOUT_SECONDS": "timeout_seconds",
         "CLAUDE_SCORING_PROMPT_CACHE": "prompt_cache",
         "CLAUDE_SCORING_CACHE_TTL": "cache_ttl",
@@ -149,6 +170,7 @@ def load_scoring_config(
     return ScoringConfig(
         model=_string_setting("scoring.model", values["model"]),
         max_tokens=_int_setting("scoring.max_tokens", values["max_tokens"]),
+        effort=_effort_setting("scoring.effort", values["effort"]),
         timeout_seconds=_float_setting("scoring.timeout_seconds", values["timeout_seconds"]),
         prompt_cache=_bool_setting("scoring.prompt_cache", values["prompt_cache"]),
         cache_ttl=_cache_ttl_setting("scoring.cache_ttl", values["cache_ttl"]),

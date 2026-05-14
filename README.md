@@ -130,6 +130,8 @@ Defaults live in [`model_config.toml`](model_config.toml):
 ```toml
 [scoring]
 model = "claude-haiku-4-5"
+# Sonnet/Opus 4.6+ only. Uncomment with e.g. model = "claude-sonnet-4-6".
+# effort = "medium"
 max_tokens = 300
 timeout_seconds = 45.0
 prompt_cache = true
@@ -141,7 +143,7 @@ Edit this file to try another [Claude model](https://platform.claude.com/docs/en
 - Haiku 4.5 is the default for high-volume, short, structured relevance scoring where speed and cost matter.
 - Sonnet 4.6 may help with ambiguous or borderline items, but costs more. Compare it against historical score log examples before switching globally.
 
-`max_tokens`, timeout, and cache settings are tuning knobs, not required setup. Keep [prompt caching](https://platform.claude.com/docs/en/build-with-claude/prompt-caching) enabled unless you have a reason to disable it.
+`effort` is optional and is only sent when configured; use it with supported Sonnet/Opus models, such as `effort = "medium"` for Sonnet 4.6. `max_tokens`, timeout, and cache settings are tuning knobs, not required setup. Keep [prompt caching](https://platform.claude.com/docs/en/build-with-claude/prompt-caching) enabled unless you have a reason to disable it.
 
 For deployment-specific overrides, use the optional `CLAUDE_SCORING_*` environment variables shown in `.env.example`; environment variables take precedence over `model_config.toml`.
 

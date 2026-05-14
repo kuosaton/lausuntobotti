@@ -13,6 +13,7 @@ def test_load_scoring_config_reads_committed_defaults() -> None:
     assert scoring_config == config.ScoringConfig(
         model="claude-haiku-4-5",
         max_tokens=300,
+        effort=None,
         timeout_seconds=45.0,
         prompt_cache=True,
         cache_ttl="5m",
@@ -27,6 +28,7 @@ def test_load_scoring_config_env_overrides_toml(tmp_path) -> None:
             [scoring]
             model = "claude-haiku-4-5"
             max_tokens = 300
+            effort = "medium"
             timeout_seconds = 45.0
             prompt_cache = true
             cache_ttl = "5m"
@@ -40,6 +42,7 @@ def test_load_scoring_config_env_overrides_toml(tmp_path) -> None:
         environ={
             "CLAUDE_SCORING_MODEL": "claude-sonnet-4-6",
             "CLAUDE_SCORING_MAX_TOKENS": "500",
+            "CLAUDE_SCORING_EFFORT": "low",
             "CLAUDE_SCORING_TIMEOUT_SECONDS": "60",
             "CLAUDE_SCORING_PROMPT_CACHE": "false",
             "CLAUDE_SCORING_CACHE_TTL": "1h",
@@ -49,6 +52,7 @@ def test_load_scoring_config_env_overrides_toml(tmp_path) -> None:
     assert scoring_config == config.ScoringConfig(
         model="claude-sonnet-4-6",
         max_tokens=500,
+        effort="low",
         timeout_seconds=60.0,
         prompt_cache=False,
         cache_ttl="1h",
@@ -83,6 +87,7 @@ def test_load_scoring_config_parses_env_booleans(
     ("env_name", "raw", "message"),
     [
         ("CLAUDE_SCORING_MAX_TOKENS", "nope", "max_tokens"),
+        ("CLAUDE_SCORING_EFFORT", "heroic", "effort"),
         ("CLAUDE_SCORING_TIMEOUT_SECONDS", "slow", "timeout_seconds"),
         ("CLAUDE_SCORING_PROMPT_CACHE", "maybe", "prompt_cache"),
         ("CLAUDE_SCORING_CACHE_TTL", "24h", "cache_ttl"),

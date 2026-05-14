@@ -175,14 +175,23 @@ def score_item(
         TextBlockParam(type="text", text=item_text),
     ]
     messages = [MessageParam(role="user", content=message_content)]
-
-    response = _get_client().messages.create(
-        model=scoring_config.model,
-        max_tokens=scoring_config.max_tokens,
-        timeout=scoring_config.timeout_seconds,
-        system=system_blocks,
-        messages=messages,
-    )
+    if scoring_config.effort is None:
+        response = _get_client().messages.create(
+            model=scoring_config.model,
+            max_tokens=scoring_config.max_tokens,
+            timeout=scoring_config.timeout_seconds,
+            system=system_blocks,
+            messages=messages,
+        )
+    else:
+        response = _get_client().messages.create(
+            model=scoring_config.model,
+            max_tokens=scoring_config.max_tokens,
+            timeout=scoring_config.timeout_seconds,
+            system=system_blocks,
+            messages=messages,
+            output_config={"effort": scoring_config.effort},
+        )
 
     text_parts: list[str] = []
     for block in response.content:
