@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -15,36 +14,25 @@ import httpx
 from dotenv import load_dotenv
 
 import config
-from clients.eduskunta import (
-    Document,
-    Matter,
-    extract_documents,
-    fetch_agenda_xml,
-    fetch_committee_page,
-    parse_agenda_matters,
-)
 from clients.kuluttajaliitto import build_context, fetch_statements
-from clients.lausuntopalvelu import Proposal, fetch_recent, get_participation_flags
-from delivery.email import build_daily_digest, build_weekly_digest, send_email
-from processing.llm_scorer import score_item
+from delivery.email import build_daily_digest
 from processing.score_classification import classify_score
 from state_store import (
-    _append_flagged,
-    _append_log,
     _load_context,
-    _load_json,
     _migrate_score_log_split,
     _save_context,
     _save_json,
     _score_log_path,
 )
+from workflows.lausuntopyynnot import (
+    _deliver_digest,
+    cmd_lausuntopyynnot as _run_lausuntopyynnot_workflow,
+)
+from workflows.valiokunta import cmd_valiokunta as _run_valiokunta_workflow
 
 load_dotenv()
 
-
-_WEEKLY_COMMITTEES = ("talousvaliokunta",)
 _SOURCE_LAUSUNTOPYYNNOT = "lausuntopyynnot"
-_LOG_SOURCE_LAUSUNTOPALVELU = "lausuntopalvelu"
 _SOURCE_VALIOKUNTA = "valiokunta"
 
 
@@ -103,419 +91,16 @@ def cmd_update_context() -> None:
     print(f"Saved {len(new_ctx.get('recent_statements', []))} statements to {config.CONTEXT_PATH}")
 
 
-def _score_proposal(client: httpx.Client, proposal: Proposal, ctx: dict) -> dict | None:
-    on_distribution_list = False
-    has_responded = False
-    try:
-        on_distribution_list, has_responded = get_participation_flags(
-            client, proposal.id, "Kuluttajaliit"
-        )
-    except httpx.HTTPError as exc:
-        print(
-            f"  [WARN] could not read participation info for {proposal.id}: {exc}",
-            file=sys.stderr,
-        )
-
-    if on_distribution_list:
-        print(f"  [SKIP DISTRIBUTION] {proposal.title}")
-        return {"_skip_reason": "jakelu", "jakelu_kuluttajaliitto": True}
-
-    if has_responded:
-        print(f"  [SKIP RESPONDED] {proposal.title}")
-        return {"_skip_reason": "already_responded", "jakelu_kuluttajaliitto": False}
-
-    try:
-        result = score_item(proposal.title, proposal.abstract, "lausuntopalvelu", ctx)
-    except Exception as exc:  # pylint: disable=broad-exception-caught
-        print(f"  [ERROR] scoring failed for {proposal.id}: {exc}", file=sys.stderr)
-        return None
-
-    result["jakelu_kuluttajaliitto"] = False
-    return result
-
-
-def _build_scored_entry(p: Proposal, result: dict, timestamp: str) -> dict:
-    return {
-        "timestamp": timestamp,
-        "source": _LOG_SOURCE_LAUSUNTOPALVELU,
-        "id": p.id,
-        "title": p.title,
-        "score": result["score"],
-        "rationale": result.get("rationale", ""),
-        "themes": result.get("themes", []),
-        "jakelu_kuluttajaliitto": result["jakelu_kuluttajaliitto"],
-        "published_on": p.published_on.isoformat(),
-        "deadline": p.deadline.date().isoformat() if p.deadline else None,
-        "organization": p.organization_name,
-        "url": p.url,
-    }
-
-
-def _record_result(p: Proposal, result: dict, notified: bool, seen: dict) -> None:
-    now = datetime.now(UTC).isoformat()
-    seen[p.id] = {
-        "first_seen": now,
-        "title": p.title,
-        "score": result["score"],
-        "notified": notified,
-        "notified_at": now if notified else None,
-        "published_on": p.published_on.isoformat(),
-    }
-    log_entry = _build_scored_entry(p, result, now)
-    log_entry["notified"] = notified
-    _append_log(log_entry)
-
-
-def _deliver_digest(
-    flagged: list[dict], dry_run: bool, borderline: list[dict] | None = None
-) -> bool:
-    borderline = borderline or []
-    if flagged:
-        print(f"\n{len(flagged)} item(s) above threshold:")
-        for item in sorted(flagged, key=lambda x: -x["score"]):
-            print(f"  [{item['score']}/10] {item['proposal'].title}")
-    if borderline:
-        print(f"\n{len(borderline)} borderline item(s) (score 4-5):")
-        for item in sorted(borderline, key=lambda x: -x["score"]):
-            print(f"  [{item['score']}/10] {item['proposal'].title}")
-    subject, html_body, text_body = build_daily_digest(flagged, borderline)
-    print(f"\nSubject: {subject}")
-    print(text_body)
-    if dry_run:
-        print("\n--- DRY RUN: would send email ---")
-        return False
-    recipient = os.environ.get("RECIPIENT_EMAIL", "?")
-    answer = input(f"\nSend to {recipient}? [Y/n] ").strip().lower()
-    if answer not in ("", "y"):
-        print("Aborted.")
-        return False
-    try:
-        send_email(subject=subject, html_body=html_body, text_body=text_body)
-    except Exception as exc:
-        print(f"ERROR: email delivery failed: {exc}", file=sys.stderr)
-        return False
-    print(f"Email sent to {recipient}")
-    return True
-
-
-def _score_lausuntopyynto_proposals(
-    new_proposals: list[Proposal],
-    ctx: dict,
-    seen: dict,
-) -> tuple[list[dict], list[dict], list[tuple[Proposal, dict]]]:
-    flagged = []
-    borderline = []
-    scored_results: list[tuple[Proposal, dict]] = []
-
-    with httpx.Client() as client:
-        for p in new_proposals:
-            result = _score_proposal(client, p, ctx)
-            if result is None:
-                continue
-
-            skip_reason = result.get("_skip_reason")
-            if skip_reason in ("jakelu", "already_responded"):
-                now = datetime.now(UTC).isoformat()
-                seen[p.id] = {
-                    "first_seen": now,
-                    "title": p.title,
-                    "score": 0,
-                    "notified": False,
-                    "notified_at": None,
-                    "status": f"skipped_{skip_reason}",
-                    "published_on": p.published_on.isoformat(),
-                }
-                continue
-
-            score = result["score"]
-            scored_results.append((p, result))
-
-            band = classify_score(score)
-            if band == "flag":
-                print(f"  [FLAG {score}/10] {p.title}")
-                flagged.append({"proposal": p, **result})
-            elif band == "log":
-                print(f"  [LOG {score}/10] {p.title}")
-                borderline.append({"proposal": p, **result})
-            else:
-                print(f"  [DROP {score}/10] {p.title}")
-
-    return flagged, borderline, scored_results
-
-
-def _record_lausuntopyynto_results(
-    scored_results: list[tuple[Proposal, dict]],
-    digest_sent: bool,
-    seen: dict,
-) -> None:
-    for p, result in scored_results:
-        notified = classify_score(result["score"]) == "flag" and digest_sent
-        _record_result(p, result, notified, seen)
-        if classify_score(result["score"]) == "flag":
-            flagged_entry = _build_scored_entry(p, result, datetime.now(UTC).isoformat())
-            _append_flagged(flagged_entry)
-
-
 def cmd_lausuntopyynnot(dry_run: bool) -> None:
-    _migrate_score_log_split()
-    ctx = _ensure_context_fresh()
-    if ctx is None:
-        print("Aborted.")
-        return
-
-    seen = _load_json(config.SEEN_PROPOSALS_PATH)
-
-    print("Fetching lausuntopalvelu proposals...", flush=True)
-    with httpx.Client() as client:
-        proposals = fetch_recent(client, top=config.LAUSUNTOPALVELU_FETCH_TOP)
-
-    today = datetime.now(UTC).date()
-    open_proposals = [p for p in proposals if p.deadline is None or p.deadline.date() >= today]
-    new_proposals = [p for p in open_proposals if p.id not in seen]
-    print(f"  {len(proposals)} fetched, {len(open_proposals)} open, {len(new_proposals)} new")
-
-    if not new_proposals:
-        print("Nothing new to score.")
-        return
-
-    answer = input(f"Score {len(new_proposals)} proposal(s)? [Y/n] ").strip().lower()
-    if answer not in ("", "y"):
-        print("Aborted.")
-        return
-
-    flagged, borderline, scored_results = _score_lausuntopyynto_proposals(new_proposals, ctx, seen)
-
-    if not flagged and not borderline:
-        _record_lausuntopyynto_results(scored_results, digest_sent=False, seen=seen)
-        _save_json(config.SEEN_PROPOSALS_PATH, seen)
-        print("No items above log threshold.")
-        return
-
-    digest_sent = _deliver_digest(flagged, dry_run, borderline=borderline)
-    _record_lausuntopyynto_results(scored_results, digest_sent, seen)
-    _save_json(config.SEEN_PROPOSALS_PATH, seen)
+    _run_lausuntopyynnot_workflow(dry_run=dry_run, ctx=_ensure_context_fresh())
 
 
 def cmd_daily(dry_run: bool) -> None:
     cmd_lausuntopyynnot(dry_run=dry_run)
 
 
-def _is_agenda(document: Document) -> bool:
-    return document.tyyppikoodi.endswith("VE") and document.eduskuntatunnus is not None
-
-
-def _collect_new_agendas(
-    client: httpx.Client,
-    seen_docs: dict,
-) -> list[tuple[str, Document]]:
-    new_agendas: list[tuple[str, Document]] = []
-    for committee_key in _WEEKLY_COMMITTEES:
-        url = config.COMMITTEE_URLS[committee_key]
-        display = config.COMMITTEE_DISPLAY_NAMES[committee_key]
-        print(f"Fetching {display}...", flush=True)
-        try:
-            html = fetch_committee_page(client, url)
-            documents = extract_documents(html)
-        except Exception as exc:  # pylint: disable=broad-exception-caught
-            print(f"  [ERROR] could not fetch/parse {display}: {exc}", file=sys.stderr)
-            continue
-
-        agendas = [doc for doc in documents if _is_agenda(doc) and doc.edktunnus not in seen_docs]
-        print(f"  {len(documents)} documents, {len(agendas)} new agendas")
-        new_agendas.extend((committee_key, agenda) for agenda in agendas)
-    return new_agendas
-
-
-def _resolve_agenda_matters(
-    client: httpx.Client,
-    agendas: list[tuple[str, Document]],
-) -> list[tuple[str, Document, list[Matter]]]:
-    resolved: list[tuple[str, Document, list[Matter]]] = []
-    for committee_key, agenda in agendas:
-        try:
-            xml = fetch_agenda_xml(client, agenda.eduskuntatunnus or "")
-            matters = parse_agenda_matters(xml)
-        except Exception as exc:  # pylint: disable=broad-exception-caught
-            print(
-                f"  [ERROR] could not fetch/parse {agenda.eduskuntatunnus}: {exc}",
-                file=sys.stderr,
-            )
-            continue
-        resolved.append((committee_key, agenda, matters))
-    return resolved
-
-
-def _mark_agenda_seen(seen_docs: dict, agenda: Document) -> None:
-    seen_docs[agenda.edktunnus] = {
-        "first_seen": datetime.now(UTC).isoformat(),
-        "eduskuntatunnus": agenda.eduskuntatunnus,
-        "nimeke": agenda.nimeke,
-        "score": None,
-        "matter_scores": {},
-    }
-
-
-def _score_weekly_matter(
-    matter: Matter,
-    committee_key: str,
-    ctx: dict,
-) -> dict | None:
-    try:
-        result = score_item(matter.title, matter.type, committee_key, ctx)
-    except Exception as exc:  # pylint: disable=broad-exception-caught
-        print(f"  [ERROR] scoring {matter.eduskuntatunnus}: {exc}", file=sys.stderr)
-        return None
-
-    return result
-
-
-def _record_weekly_matter(
-    matter: Matter,
-    committee_key: str,
-    result: dict,
-    notified: bool,
-) -> None:
-    _append_log(
-        {
-            "timestamp": datetime.now(UTC).isoformat(),
-            "source": committee_key,
-            "id": matter.eduskuntatunnus,
-            "title": matter.title,
-            "score": result["score"],
-            "rationale": result.get("rationale", ""),
-            "themes": result.get("themes", []),
-            "notified": notified,
-        },
-        path=config.VALIOKUNTA_SCORE_LOG_PATH,
-    )
-
-
-def _deliver_weekly(
-    committee_items: dict[str, list[dict]],
-    borderline_items: dict[str, list[dict]],
-    total_scored: int,
-    total_logged: int,
-    dry_run: bool,
-) -> bool:
-    week_number = datetime.now(UTC).isocalendar().week
-    total_flagged = sum(len(items) for items in committee_items.values())
-    if total_flagged == 0 and total_logged == 0:
-        print("No valiokunta items above log threshold.")
-        return False
-
-    subject, html_body, text_body = build_weekly_digest(
-        committee_items,
-        week_number,
-        total_scored,
-        total_logged,
-        borderline_items=borderline_items,
-    )
-    print(f"\nSubject: {subject}")
-    print(text_body)
-    if dry_run:
-        print(f"\n--- DRY RUN: would send valiokunta digest ({total_flagged} flagged) ---")
-        return False
-
-    recipient = os.environ.get("RECIPIENT_EMAIL", "?")
-    answer = input(f"\nSend to {recipient}? [Y/n] ").strip().lower()
-    if answer not in ("", "y"):
-        print("Aborted.")
-        return False
-
-    try:
-        send_email(subject=subject, html_body=html_body, text_body=text_body)
-    except Exception as exc:
-        print(f"ERROR: email delivery failed: {exc}", file=sys.stderr)
-        return False
-    print(f"\nWeekly digest sent: {total_flagged} flagged, {total_logged} logged")
-    return True
-
-
 def cmd_valiokunta(dry_run: bool) -> None:
-    _migrate_score_log_split()
-    ctx = _ensure_context_fresh()
-    if ctx is None:
-        print("Aborted.")
-        return
-
-    seen_docs = _load_json(config.SEEN_DOCUMENTS_PATH)
-
-    with httpx.Client() as client:
-        new_agendas = _collect_new_agendas(client, seen_docs)
-        if not new_agendas:
-            print("No new committee agendas to process.")
-            return
-        agenda_matters = _resolve_agenda_matters(client, new_agendas)
-
-    total_matters = sum(len(matters) for _, _, matters in agenda_matters)
-    if total_matters == 0:
-        print("No matters scheduled in the new agendas.")
-        return
-
-    answer = input(f"Score {total_matters} matter(s)? [Y/n] ").strip().lower()
-    if answer not in ("", "y"):
-        print("Aborted.")
-        return
-
-    committee_items: dict[str, list[dict]] = {key: [] for key in _WEEKLY_COMMITTEES}
-    borderline_items: dict[str, list[dict]] = {key: [] for key in _WEEKLY_COMMITTEES}
-    scored_matters: list[tuple[str, str, Matter, dict]] = []
-    total_scored = 0
-    total_logged = 0
-
-    for committee_key, agenda, matters in agenda_matters:
-        if agenda.edktunnus not in seen_docs:
-            _mark_agenda_seen(seen_docs, agenda)
-        for matter in matters:
-            result = _score_weekly_matter(matter, committee_key, ctx)
-            if result is None:
-                continue
-
-            score = result["score"]
-            total_scored += 1
-            scored_matters.append((agenda.edktunnus, committee_key, matter, result))
-
-            band = classify_score(score)
-            if band == "flag":
-                print(f"  [FLAG {score}/10] {matter.eduskuntatunnus}: {matter.title}")
-                committee_items[committee_key].append(
-                    {
-                        "title": matter.title,
-                        "eduskuntatunnus": matter.eduskuntatunnus,
-                        "score": score,
-                        "rationale": result.get("rationale", ""),
-                        "themes": result.get("themes", []),
-                        "url": "",
-                    }
-                )
-            elif band == "log":
-                total_logged += 1
-                print(f"  [LOG {score}/10] {matter.eduskuntatunnus}: {matter.title}")
-                borderline_items[committee_key].append(
-                    {
-                        "title": matter.title,
-                        "eduskuntatunnus": matter.eduskuntatunnus,
-                        "score": score,
-                        "rationale": result.get("rationale", ""),
-                        "themes": result.get("themes", []),
-                        "url": "",
-                    }
-                )
-            else:
-                print(f"  [DROP {score}/10] {matter.eduskuntatunnus}: {matter.title}")
-
-    digest_sent = _deliver_weekly(
-        committee_items, borderline_items, total_scored, total_logged, dry_run
-    )
-    for agenda_id, committee_key, matter, result in scored_matters:
-        notified = classify_score(result["score"]) == "flag" and digest_sent
-        _record_weekly_matter(matter, committee_key, result, notified)
-        seen_docs[agenda_id]["matter_scores"][matter.eduskuntatunnus] = {
-            "score": result["score"],
-            "notified": notified,
-        }
-
-    _save_json(config.SEEN_DOCUMENTS_PATH, seen_docs)
+    _run_valiokunta_workflow(dry_run=dry_run, ctx=_ensure_context_fresh())
 
 
 def cmd_weekly(dry_run: bool) -> None:

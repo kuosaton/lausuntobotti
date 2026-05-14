@@ -4,6 +4,7 @@ import json
 from datetime import date, datetime, timedelta
 
 import main
+import workflows.lausuntopyynnot as lausunto_workflow
 from clients.lausuntopalvelu import Proposal
 
 
@@ -35,14 +36,14 @@ def test_cmd_daily_warns_if_distribution_lookup_fails_and_drops_low_score(
         url="https://example.invalid/p/drop-1",
     )
 
-    monkeypatch.setattr(main, "fetch_recent", lambda client, top: [proposal])
+    monkeypatch.setattr(lausunto_workflow, "fetch_recent", lambda client, top: [proposal])
 
     def _raise_distribution(*args, **kwargs):
         raise main.httpx.HTTPError("distribution lookup unavailable")
 
-    monkeypatch.setattr(main, "get_participation_flags", _raise_distribution)
+    monkeypatch.setattr(lausunto_workflow, "get_participation_flags", _raise_distribution)
     monkeypatch.setattr(
-        main,
+        lausunto_workflow,
         "score_item",
         lambda *args, **kwargs: {"score": 2, "rationale": "Ei relevanssia", "themes": []},
     )

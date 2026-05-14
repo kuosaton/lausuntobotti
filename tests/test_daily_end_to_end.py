@@ -14,6 +14,7 @@ from datetime import date, datetime, timedelta
 import resend
 
 import main
+import workflows.lausuntopyynnot as lausunto_workflow
 from clients.lausuntopalvelu import Proposal
 
 
@@ -81,13 +82,15 @@ def test_cmd_daily_full_pipeline_renders_real_digest(state_paths, monkeypatch) -
     }
 
     monkeypatch.setattr(
-        main,
+        lausunto_workflow,
         "fetch_recent",
         lambda client, top: [flagged_proposal, borderline_proposal, dropped_proposal],
     )
-    monkeypatch.setattr(main, "get_participation_flags", lambda client, pid, name: (False, False))
     monkeypatch.setattr(
-        main,
+        lausunto_workflow, "get_participation_flags", lambda client, pid, name: (False, False)
+    )
+    monkeypatch.setattr(
+        lausunto_workflow,
         "score_item",
         lambda title, abstract, source, ctx: dict(scores_by_id[_find_id_by_title(title)]),
     )
@@ -155,10 +158,12 @@ def test_cmd_daily_persists_flagged_with_complete_shape(state_paths, monkeypatch
         url="https://example.invalid/p/persist-1",
     )
 
-    monkeypatch.setattr(main, "fetch_recent", lambda client, top: [proposal])
-    monkeypatch.setattr(main, "get_participation_flags", lambda client, pid, name: (False, False))
+    monkeypatch.setattr(lausunto_workflow, "fetch_recent", lambda client, top: [proposal])
     monkeypatch.setattr(
-        main,
+        lausunto_workflow, "get_participation_flags", lambda client, pid, name: (False, False)
+    )
+    monkeypatch.setattr(
+        lausunto_workflow,
         "score_item",
         lambda *args, **kwargs: {
             "score": 8,

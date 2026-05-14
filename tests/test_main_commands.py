@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import config
 import main
+import workflows.lausuntopyynnot as lausunto_workflow
 from clients.kuluttajaliitto import Statement
 from clients.lausuntopalvelu import Proposal
 
@@ -26,12 +27,12 @@ def test_cmd_daily_no_new_proposals_exits_cleanly(state_paths, monkeypatch, caps
         json.dumps({"already-seen": {"first_seen": "2026-01-01T00:00:00+00:00"}}),
         encoding="utf-8",
     )
-    monkeypatch.setattr(main, "fetch_recent", lambda client, top: [proposal])
+    monkeypatch.setattr(lausunto_workflow, "fetch_recent", lambda client, top: [proposal])
 
     def _should_not_run(*args, **kwargs):
         raise AssertionError("score_item should not be called when there are no new proposals")
 
-    monkeypatch.setattr(main, "score_item", _should_not_run)
+    monkeypatch.setattr(lausunto_workflow, "score_item", _should_not_run)
     main.cmd_daily(dry_run=True)
     out = capsys.readouterr().out
     assert "Nothing new to score." in out
@@ -49,10 +50,12 @@ def test_cmd_daily_borderline_item_is_logged_but_not_flagged(state_paths, monkey
         url="https://example.invalid/p/borderline-1",
     )
 
-    monkeypatch.setattr(main, "fetch_recent", lambda client, top: [proposal])
-    monkeypatch.setattr(main, "get_participation_flags", lambda client, pid, name: (False, False))
+    monkeypatch.setattr(lausunto_workflow, "fetch_recent", lambda client, top: [proposal])
     monkeypatch.setattr(
-        main,
+        lausunto_workflow, "get_participation_flags", lambda client, pid, name: (False, False)
+    )
+    monkeypatch.setattr(
+        lausunto_workflow,
         "score_item",
         lambda *args, **kwargs: {"score": 5, "rationale": "Rajatapaus", "themes": []},
     )
@@ -93,10 +96,12 @@ def test_cmd_daily_borderline_only_triggers_digest(state_paths, monkeypatch) -> 
 
     captured: dict = {}
 
-    monkeypatch.setattr(main, "fetch_recent", lambda client, top: [proposal])
-    monkeypatch.setattr(main, "get_participation_flags", lambda client, pid, name: (False, False))
+    monkeypatch.setattr(lausunto_workflow, "fetch_recent", lambda client, top: [proposal])
     monkeypatch.setattr(
-        main,
+        lausunto_workflow, "get_participation_flags", lambda client, pid, name: (False, False)
+    )
+    monkeypatch.setattr(
+        lausunto_workflow,
         "score_item",
         lambda *args, **kwargs: {"score": 5, "rationale": "Rajatapaus", "themes": []},
     )
@@ -106,7 +111,7 @@ def test_cmd_daily_borderline_only_triggers_digest(state_paths, monkeypatch) -> 
         captured["borderline"] = list(borderline or [])
         return "SUBJ", "<p>H</p>", "TEXT"
 
-    monkeypatch.setattr(main, "build_daily_digest", _capture_build)
+    monkeypatch.setattr(lausunto_workflow, "build_daily_digest", _capture_build)
 
     main.cmd_daily(dry_run=True)
 
@@ -231,13 +236,15 @@ def test_cmd_daily_handles_scoring_exception(state_paths, monkeypatch) -> None:
         published_on=datetime.now(main.UTC),
         url="https://example.invalid/p/score-fail",
     )
-    monkeypatch.setattr(main, "fetch_recent", lambda client, top: [proposal])
-    monkeypatch.setattr(main, "get_participation_flags", lambda client, pid, name: (False, False))
+    monkeypatch.setattr(lausunto_workflow, "fetch_recent", lambda client, top: [proposal])
+    monkeypatch.setattr(
+        lausunto_workflow, "get_participation_flags", lambda client, pid, name: (False, False)
+    )
 
     def _raise_score(*args, **kwargs):
         raise RuntimeError("scoring down")
 
-    monkeypatch.setattr(main, "score_item", _raise_score)
+    monkeypatch.setattr(lausunto_workflow, "score_item", _raise_score)
 
     main.cmd_daily(dry_run=True)
 
@@ -260,15 +267,17 @@ def test_cmd_daily_non_dry_run_sends_email(state_paths, monkeypatch) -> None:
         url="https://example.invalid/p/notify-1",
     )
 
-    monkeypatch.setattr(main, "fetch_recent", lambda client, top: [proposal])
-    monkeypatch.setattr(main, "get_participation_flags", lambda client, pid, name: (False, False))
+    monkeypatch.setattr(lausunto_workflow, "fetch_recent", lambda client, top: [proposal])
     monkeypatch.setattr(
-        main,
+        lausunto_workflow, "get_participation_flags", lambda client, pid, name: (False, False)
+    )
+    monkeypatch.setattr(
+        lausunto_workflow,
         "score_item",
         lambda *args, **kwargs: {"score": 8, "rationale": "OK", "themes": []},
     )
     monkeypatch.setattr(
-        main,
+        lausunto_workflow,
         "send_email",
         lambda subject, html_body, text_body: calls.update(
             {"subject": subject, "html": html_body, "text": text_body}
@@ -292,10 +301,12 @@ def test_cmd_daily_send_failure_does_not_mark_notified(state_paths, monkeypatch,
         url="https://example.invalid/p/send-fail-1",
     )
 
-    monkeypatch.setattr(main, "fetch_recent", lambda client, top: [proposal])
-    monkeypatch.setattr(main, "get_participation_flags", lambda client, pid, name: (False, False))
+    monkeypatch.setattr(lausunto_workflow, "fetch_recent", lambda client, top: [proposal])
     monkeypatch.setattr(
-        main,
+        lausunto_workflow, "get_participation_flags", lambda client, pid, name: (False, False)
+    )
+    monkeypatch.setattr(
+        lausunto_workflow,
         "score_item",
         lambda *args, **kwargs: {"score": 8, "rationale": "OK", "themes": []},
     )
@@ -303,7 +314,7 @@ def test_cmd_daily_send_failure_does_not_mark_notified(state_paths, monkeypatch,
     def _raise_send(*args, **kwargs):
         raise RuntimeError("resend down")
 
-    monkeypatch.setattr(main, "send_email", _raise_send)
+    monkeypatch.setattr(lausunto_workflow, "send_email", _raise_send)
 
     main.cmd_daily(dry_run=False)
 
@@ -332,17 +343,19 @@ def test_cmd_daily_declined_send_does_not_mark_notified(state_paths, monkeypatch
 
     inputs = iter(["y", "n"])
     monkeypatch.setattr("builtins.input", lambda _: next(inputs))
-    monkeypatch.setattr(main, "fetch_recent", lambda client, top: [proposal])
-    monkeypatch.setattr(main, "get_participation_flags", lambda client, pid, name: (False, False))
+    monkeypatch.setattr(lausunto_workflow, "fetch_recent", lambda client, top: [proposal])
     monkeypatch.setattr(
-        main,
+        lausunto_workflow, "get_participation_flags", lambda client, pid, name: (False, False)
+    )
+    monkeypatch.setattr(
+        lausunto_workflow,
         "score_item",
         lambda *args, **kwargs: {"score": 8, "rationale": "OK", "themes": []},
     )
 
     sent = {"called": False}
     monkeypatch.setattr(
-        main,
+        lausunto_workflow,
         "send_email",
         lambda *args, **kwargs: sent.__setitem__("called", True),
     )
@@ -369,13 +382,13 @@ def test_cmd_daily_aborts_on_user_no(state_paths, monkeypatch, capsys) -> None:
         url="https://example.invalid/p/abort-1",
     )
 
-    monkeypatch.setattr(main, "fetch_recent", lambda client, top: [proposal])
+    monkeypatch.setattr(lausunto_workflow, "fetch_recent", lambda client, top: [proposal])
     monkeypatch.setattr("builtins.input", lambda _: "n")
 
     def _should_not_score(*args, **kwargs):
         raise AssertionError("score_item should not run after user abort")
 
-    monkeypatch.setattr(main, "score_item", _should_not_score)
+    monkeypatch.setattr(lausunto_workflow, "score_item", _should_not_score)
 
     main.cmd_daily(dry_run=True)
     out = capsys.readouterr().out
@@ -399,10 +412,12 @@ def test_cmd_daily_dry_run_prints_digest_but_does_not_send(
         url="https://example.invalid/p/dryrun-1",
     )
 
-    monkeypatch.setattr(main, "fetch_recent", lambda client, top: [proposal])
-    monkeypatch.setattr(main, "get_participation_flags", lambda client, pid, name: (False, False))
+    monkeypatch.setattr(lausunto_workflow, "fetch_recent", lambda client, top: [proposal])
     monkeypatch.setattr(
-        main,
+        lausunto_workflow, "get_participation_flags", lambda client, pid, name: (False, False)
+    )
+    monkeypatch.setattr(
+        lausunto_workflow,
         "score_item",
         lambda *args, **kwargs: {"score": 8, "rationale": "OK", "themes": []},
     )
@@ -410,7 +425,7 @@ def test_cmd_daily_dry_run_prints_digest_but_does_not_send(
     def _should_not_send(*args, **kwargs):
         raise AssertionError("send_email should not run in dry-run mode")
 
-    monkeypatch.setattr(main, "send_email", _should_not_send)
+    monkeypatch.setattr(lausunto_workflow, "send_email", _should_not_send)
 
     main.cmd_daily(dry_run=True)
     out = capsys.readouterr().out
@@ -437,13 +452,17 @@ def test_deliver_digest_aborts_when_send_declined(monkeypatch, capsys) -> None:
         }
     ]
     monkeypatch.setattr(
-        main, "build_daily_digest", lambda f, borderline=None: ("S", "<p>H</p>", "Body")
+        lausunto_workflow,
+        "build_daily_digest",
+        lambda f, borderline=None: ("S", "<p>H</p>", "Body"),
     )
     monkeypatch.setattr(
-        main, "send_email", lambda subject, html_body, text_body: sent.__setitem__("called", True)
+        lausunto_workflow,
+        "send_email",
+        lambda subject, html_body, text_body: sent.__setitem__("called", True),
     )
 
-    main._deliver_digest(flagged, dry_run=False)
+    lausunto_workflow._deliver_digest(flagged, dry_run=False)
 
     out = capsys.readouterr().out
     assert "Aborted." in out

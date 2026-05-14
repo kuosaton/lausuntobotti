@@ -7,6 +7,7 @@ import resend
 
 import delivery.email as email_mod
 import main
+import workflows.lausuntopyynnot as lausunto_workflow
 from clients.lausuntopalvelu import Proposal
 from processing import llm_scorer
 
@@ -49,10 +50,10 @@ def test_cmd_daily_uses_open_client_for_recipient_lookup(state_paths, monkeypatc
         seen_lookup_state["checked"] = True
         return False, False
 
-    monkeypatch.setattr(main, "fetch_recent", fake_fetch_recent)
-    monkeypatch.setattr(main, "get_participation_flags", fake_get_participation_flags)
+    monkeypatch.setattr(lausunto_workflow, "fetch_recent", fake_fetch_recent)
+    monkeypatch.setattr(lausunto_workflow, "get_participation_flags", fake_get_participation_flags)
     monkeypatch.setattr(
-        main,
+        lausunto_workflow,
         "score_item",
         lambda *args, **kwargs: {"score": 5, "rationale": "ok", "themes": []},
     )

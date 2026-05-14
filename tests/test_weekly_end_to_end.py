@@ -15,6 +15,7 @@ import resend
 
 import config
 import main
+import workflows.valiokunta as valiokunta_workflow
 
 
 COMMITTEE_HTML = """
@@ -72,8 +73,10 @@ def test_cmd_weekly_full_pipeline_renders_real_digest(state_paths, monkeypatch) 
     monkeypatch.setenv("RECIPIENT_EMAIL", "vastaanottaja@example.com")
     monkeypatch.setenv("RESEND_API_KEY", "re_test_key")
 
-    monkeypatch.setattr(main, "fetch_committee_page", lambda client, url: COMMITTEE_HTML)
-    monkeypatch.setattr(main, "fetch_agenda_xml", lambda client, tunnus: AGENDA_XML)
+    monkeypatch.setattr(
+        valiokunta_workflow, "fetch_committee_page", lambda client, url: COMMITTEE_HTML
+    )
+    monkeypatch.setattr(valiokunta_workflow, "fetch_agenda_xml", lambda client, tunnus: AGENDA_XML)
     monkeypatch.setattr("builtins.input", lambda prompt: "y")
 
     scores_by_title = {
@@ -94,7 +97,7 @@ def test_cmd_weekly_full_pipeline_renders_real_digest(state_paths, monkeypatch) 
         },
     }
     monkeypatch.setattr(
-        main,
+        valiokunta_workflow,
         "score_item",
         lambda title, abstract, source, ctx: dict(scores_by_title[title]),
     )

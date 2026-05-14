@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import config
 import main
+import workflows.valiokunta as valiokunta_workflow
 from clients.eduskunta import Document, Matter
 
 
@@ -40,13 +41,13 @@ def _matter(eduskuntatunnus: str = "HE 1/2026 vp", title: str = "Esimerkkiasia")
 
 def test_cmd_weekly_no_new_agendas_exits_cleanly(state_paths, monkeypatch, capsys) -> None:
     _setup_weekly_state(state_paths, monkeypatch)
-    monkeypatch.setattr(main, "fetch_committee_page", lambda client, url: "<html/>")
-    monkeypatch.setattr(main, "extract_documents", lambda html: [])
+    monkeypatch.setattr(valiokunta_workflow, "fetch_committee_page", lambda client, url: "<html/>")
+    monkeypatch.setattr(valiokunta_workflow, "extract_documents", lambda html: [])
 
     def _should_not_run(*args, **kwargs):
         raise AssertionError("score_item should not run when there are no agendas")
 
-    monkeypatch.setattr(main, "score_item", _should_not_run)
+    monkeypatch.setattr(valiokunta_workflow, "score_item", _should_not_run)
 
     main.cmd_weekly(dry_run=True)
 
@@ -59,9 +60,11 @@ def test_cmd_weekly_skips_already_seen_agendas(state_paths, monkeypatch, capsys)
         json.dumps({"EDK-already-seen": {"first_seen": "2026-04-20T00:00:00+00:00"}}),
         encoding="utf-8",
     )
-    monkeypatch.setattr(main, "fetch_committee_page", lambda client, url: "<html/>")
+    monkeypatch.setattr(valiokunta_workflow, "fetch_committee_page", lambda client, url: "<html/>")
     monkeypatch.setattr(
-        main, "extract_documents", lambda html: [_doc(edktunnus="EDK-already-seen")]
+        valiokunta_workflow,
+        "extract_documents",
+        lambda html: [_doc(edktunnus="EDK-already-seen")],
     )
 
     main.cmd_weekly(dry_run=True)
@@ -71,16 +74,16 @@ def test_cmd_weekly_skips_already_seen_agendas(state_paths, monkeypatch, capsys)
 
 def test_cmd_weekly_aborts_on_user_no(state_paths, monkeypatch, capsys) -> None:
     seen_documents = _setup_weekly_state(state_paths, monkeypatch)
-    monkeypatch.setattr(main, "fetch_committee_page", lambda client, url: "<html/>")
-    monkeypatch.setattr(main, "extract_documents", lambda html: [_doc()])
-    monkeypatch.setattr(main, "fetch_agenda_xml", lambda client, tunnus: "<xml/>")
-    monkeypatch.setattr(main, "parse_agenda_matters", lambda xml: [_matter()])
+    monkeypatch.setattr(valiokunta_workflow, "fetch_committee_page", lambda client, url: "<html/>")
+    monkeypatch.setattr(valiokunta_workflow, "extract_documents", lambda html: [_doc()])
+    monkeypatch.setattr(valiokunta_workflow, "fetch_agenda_xml", lambda client, tunnus: "<xml/>")
+    monkeypatch.setattr(valiokunta_workflow, "parse_agenda_matters", lambda xml: [_matter()])
     monkeypatch.setattr("builtins.input", lambda _: "n")
 
     def _should_not_score(*args, **kwargs):
         raise AssertionError("score_item should not run after abort")
 
-    monkeypatch.setattr(main, "score_item", _should_not_score)
+    monkeypatch.setattr(valiokunta_workflow, "score_item", _should_not_score)
 
     main.cmd_weekly(dry_run=True)
 
@@ -95,11 +98,11 @@ def test_cmd_weekly_dry_run_scores_and_renders_digest(
     capsys,
 ) -> None:
     seen_documents = _setup_weekly_state(state_paths, monkeypatch)
-    monkeypatch.setattr(main, "fetch_committee_page", lambda client, url: "<html/>")
-    monkeypatch.setattr(main, "extract_documents", lambda html: [_doc()])
-    monkeypatch.setattr(main, "fetch_agenda_xml", lambda client, tunnus: "<xml/>")
+    monkeypatch.setattr(valiokunta_workflow, "fetch_committee_page", lambda client, url: "<html/>")
+    monkeypatch.setattr(valiokunta_workflow, "extract_documents", lambda html: [_doc()])
+    monkeypatch.setattr(valiokunta_workflow, "fetch_agenda_xml", lambda client, tunnus: "<xml/>")
     monkeypatch.setattr(
-        main,
+        valiokunta_workflow,
         "parse_agenda_matters",
         lambda xml: [
             _matter(eduskuntatunnus="HE 1/2026 vp", title="Nostettava"),
@@ -110,7 +113,7 @@ def test_cmd_weekly_dry_run_scores_and_renders_digest(
 
     scores_by_title = {"Nostettava": 8, "Rajatapaus": 5, "Pudotettava": 1}
     monkeypatch.setattr(
-        main,
+        valiokunta_workflow,
         "score_item",
         lambda title, abstract, src, ctx: {
             "score": scores_by_title[title],
@@ -119,7 +122,7 @@ def test_cmd_weekly_dry_run_scores_and_renders_digest(
         },
     )
     monkeypatch.setattr(
-        main,
+        valiokunta_workflow,
         "build_weekly_digest",
         lambda items, week, total_scored, total_logged, borderline_items=None: (
             f"SUBJ vko{week}",
@@ -131,7 +134,7 @@ def test_cmd_weekly_dry_run_scores_and_renders_digest(
     def _should_not_send(*args, **kwargs):
         raise AssertionError("send_email should not run in dry-run")
 
-    monkeypatch.setattr(main, "send_email", _should_not_send)
+    monkeypatch.setattr(valiokunta_workflow, "send_email", _should_not_send)
 
     main.cmd_weekly(dry_run=True)
     out = capsys.readouterr().out
@@ -163,20 +166,22 @@ def test_cmd_weekly_dry_run_scores_and_renders_digest(
 
 def test_cmd_weekly_non_dry_run_sends_email(state_paths, monkeypatch) -> None:
     _setup_weekly_state(state_paths, monkeypatch)
-    monkeypatch.setattr(main, "fetch_committee_page", lambda client, url: "<html/>")
-    monkeypatch.setattr(main, "extract_documents", lambda html: [_doc()])
-    monkeypatch.setattr(main, "fetch_agenda_xml", lambda client, tunnus: "<xml/>")
-    monkeypatch.setattr(main, "parse_agenda_matters", lambda xml: [_matter()])
+    monkeypatch.setattr(valiokunta_workflow, "fetch_committee_page", lambda client, url: "<html/>")
+    monkeypatch.setattr(valiokunta_workflow, "extract_documents", lambda html: [_doc()])
+    monkeypatch.setattr(valiokunta_workflow, "fetch_agenda_xml", lambda client, tunnus: "<xml/>")
+    monkeypatch.setattr(valiokunta_workflow, "parse_agenda_matters", lambda xml: [_matter()])
     monkeypatch.setattr(
-        main,
+        valiokunta_workflow,
         "score_item",
         lambda *args, **kwargs: {"score": 9, "rationale": "OK", "themes": []},
     )
-    monkeypatch.setattr(main, "build_weekly_digest", lambda *args, **kwargs: ("S", "<h/>", "T"))
+    monkeypatch.setattr(
+        valiokunta_workflow, "build_weekly_digest", lambda *args, **kwargs: ("S", "<h/>", "T")
+    )
 
     captured: dict = {}
     monkeypatch.setattr(
-        main,
+        valiokunta_workflow,
         "send_email",
         lambda subject, html_body, text_body: captured.update(
             {"subject": subject, "html": html_body, "text": text_body}
@@ -190,21 +195,23 @@ def test_cmd_weekly_non_dry_run_sends_email(state_paths, monkeypatch) -> None:
 
 def test_cmd_weekly_send_failure_does_not_mark_notified(state_paths, monkeypatch, capsys) -> None:
     seen_documents = _setup_weekly_state(state_paths, monkeypatch)
-    monkeypatch.setattr(main, "fetch_committee_page", lambda client, url: "<html/>")
-    monkeypatch.setattr(main, "extract_documents", lambda html: [_doc()])
-    monkeypatch.setattr(main, "fetch_agenda_xml", lambda client, tunnus: "<xml/>")
-    monkeypatch.setattr(main, "parse_agenda_matters", lambda xml: [_matter()])
+    monkeypatch.setattr(valiokunta_workflow, "fetch_committee_page", lambda client, url: "<html/>")
+    monkeypatch.setattr(valiokunta_workflow, "extract_documents", lambda html: [_doc()])
+    monkeypatch.setattr(valiokunta_workflow, "fetch_agenda_xml", lambda client, tunnus: "<xml/>")
+    monkeypatch.setattr(valiokunta_workflow, "parse_agenda_matters", lambda xml: [_matter()])
     monkeypatch.setattr(
-        main,
+        valiokunta_workflow,
         "score_item",
         lambda *args, **kwargs: {"score": 9, "rationale": "OK", "themes": []},
     )
-    monkeypatch.setattr(main, "build_weekly_digest", lambda *args, **kwargs: ("S", "<h/>", "T"))
+    monkeypatch.setattr(
+        valiokunta_workflow, "build_weekly_digest", lambda *args, **kwargs: ("S", "<h/>", "T")
+    )
 
     def _raise_send(*args, **kwargs):
         raise RuntimeError("resend down")
 
-    monkeypatch.setattr(main, "send_email", _raise_send)
+    monkeypatch.setattr(valiokunta_workflow, "send_email", _raise_send)
 
     main.cmd_weekly(dry_run=False)
 
@@ -227,20 +234,22 @@ def test_cmd_weekly_declined_send_does_not_mark_notified(state_paths, monkeypatc
     seen_documents = _setup_weekly_state(state_paths, monkeypatch)
     inputs = iter(["y", "n"])
     monkeypatch.setattr("builtins.input", lambda _: next(inputs))
-    monkeypatch.setattr(main, "fetch_committee_page", lambda client, url: "<html/>")
-    monkeypatch.setattr(main, "extract_documents", lambda html: [_doc()])
-    monkeypatch.setattr(main, "fetch_agenda_xml", lambda client, tunnus: "<xml/>")
-    monkeypatch.setattr(main, "parse_agenda_matters", lambda xml: [_matter()])
+    monkeypatch.setattr(valiokunta_workflow, "fetch_committee_page", lambda client, url: "<html/>")
+    monkeypatch.setattr(valiokunta_workflow, "extract_documents", lambda html: [_doc()])
+    monkeypatch.setattr(valiokunta_workflow, "fetch_agenda_xml", lambda client, tunnus: "<xml/>")
+    monkeypatch.setattr(valiokunta_workflow, "parse_agenda_matters", lambda xml: [_matter()])
     monkeypatch.setattr(
-        main,
+        valiokunta_workflow,
         "score_item",
         lambda *args, **kwargs: {"score": 9, "rationale": "OK", "themes": []},
     )
-    monkeypatch.setattr(main, "build_weekly_digest", lambda *args, **kwargs: ("S", "<h/>", "T"))
+    monkeypatch.setattr(
+        valiokunta_workflow, "build_weekly_digest", lambda *args, **kwargs: ("S", "<h/>", "T")
+    )
 
     sent = {"called": False}
     monkeypatch.setattr(
-        main,
+        valiokunta_workflow,
         "send_email",
         lambda *args, **kwargs: sent.__setitem__("called", True),
     )
@@ -261,13 +270,13 @@ def test_cmd_weekly_declined_send_does_not_mark_notified(state_paths, monkeypatc
 
 def test_cmd_weekly_handles_agenda_fetch_error(state_paths, monkeypatch, capsys) -> None:
     _setup_weekly_state(state_paths, monkeypatch)
-    monkeypatch.setattr(main, "fetch_committee_page", lambda client, url: "<html/>")
-    monkeypatch.setattr(main, "extract_documents", lambda html: [_doc()])
+    monkeypatch.setattr(valiokunta_workflow, "fetch_committee_page", lambda client, url: "<html/>")
+    monkeypatch.setattr(valiokunta_workflow, "extract_documents", lambda html: [_doc()])
 
     def _raise(client, tunnus):
         raise RuntimeError("vaski down")
 
-    monkeypatch.setattr(main, "fetch_agenda_xml", _raise)
+    monkeypatch.setattr(valiokunta_workflow, "fetch_agenda_xml", _raise)
 
     main.cmd_weekly(dry_run=True)
 
@@ -287,8 +296,8 @@ def test_cmd_weekly_skips_non_agenda_documents(state_paths, monkeypatch, capsys)
             julkaistu="2026-04-25T08:00:00+00:00",
         ),
     ]
-    monkeypatch.setattr(main, "fetch_committee_page", lambda client, url: "<html/>")
-    monkeypatch.setattr(main, "extract_documents", lambda html: docs)
+    monkeypatch.setattr(valiokunta_workflow, "fetch_committee_page", lambda client, url: "<html/>")
+    monkeypatch.setattr(valiokunta_workflow, "extract_documents", lambda html: docs)
 
     main.cmd_weekly(dry_run=True)
 

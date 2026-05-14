@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 
 import config
 import main
+import workflows.lausuntopyynnot as lausunto_workflow
 from clients.lausuntopalvelu import Proposal
 
 
@@ -47,7 +48,7 @@ def test_cmd_daily_skips_when_kuluttajaliitto_already_on_distribution_list(
         url="https://example.invalid/proposal/test-proposal-id",
     )
 
-    monkeypatch.setattr(main, "fetch_recent", lambda client, top: [proposal])
+    monkeypatch.setattr(lausunto_workflow, "fetch_recent", lambda client, top: [proposal])
 
     captured_lookup = {"calls": 0}
 
@@ -57,12 +58,12 @@ def test_cmd_daily_skips_when_kuluttajaliitto_already_on_distribution_list(
         captured_lookup["name"] = name
         return True, False
 
-    monkeypatch.setattr(main, "get_participation_flags", fake_flags)
+    monkeypatch.setattr(lausunto_workflow, "get_participation_flags", fake_flags)
 
     def should_not_score(*args, **kwargs):
         raise AssertionError("score_item should not run for distribution-list-skipped proposals")
 
-    monkeypatch.setattr(main, "score_item", should_not_score)
+    monkeypatch.setattr(lausunto_workflow, "score_item", should_not_score)
 
     main.cmd_daily(dry_run=True)
     main.cmd_daily(dry_run=True)
@@ -119,13 +120,15 @@ def test_cmd_daily_skips_when_kuluttajaliitto_already_responded(tmp_path, monkey
         url="https://example.invalid/proposal/responded-proposal-id",
     )
 
-    monkeypatch.setattr(main, "fetch_recent", lambda client, top: [proposal])
-    monkeypatch.setattr(main, "get_participation_flags", lambda client, pid, name: (False, True))
+    monkeypatch.setattr(lausunto_workflow, "fetch_recent", lambda client, top: [proposal])
+    monkeypatch.setattr(
+        lausunto_workflow, "get_participation_flags", lambda client, pid, name: (False, True)
+    )
 
     def should_not_score(*args, **kwargs):
         raise AssertionError("score_item should not run for already-responded proposals")
 
-    monkeypatch.setattr(main, "score_item", should_not_score)
+    monkeypatch.setattr(lausunto_workflow, "score_item", should_not_score)
 
     main.cmd_daily(dry_run=True)
 

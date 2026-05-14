@@ -5,6 +5,8 @@ from datetime import datetime, timedelta
 
 import config
 import main
+import state_store
+import workflows.lausuntopyynnot as lausunto_workflow
 from clients.lausuntopalvelu import Proposal
 
 
@@ -40,21 +42,21 @@ def _setup_paths(tmp_path, monkeypatch):
 
 def test_load_json_missing_and_size_boundaries(tmp_path) -> None:
     missing = tmp_path / "missing.json"
-    assert main._load_json(missing) == {}
+    assert state_store._load_json(missing) == {}
 
     two_chars = tmp_path / "two_chars.json"
     two_chars.write_text("[]", encoding="utf-8")
-    assert main._load_json(two_chars) == {}
+    assert state_store._load_json(two_chars) == {}
 
     three_chars = tmp_path / "three_chars.json"
     three_chars.write_text("42 ", encoding="utf-8")
-    assert main._load_json(three_chars) == 42
+    assert state_store._load_json(three_chars) == 42
 
 
 def test_save_json_writes_pretty_utf8_json(tmp_path) -> None:
     path = tmp_path / "saved.json"
 
-    main._save_json(path, {"nimi": "Ääkkönen", "score": 7})
+    state_store._save_json(path, {"nimi": "Ääkkönen", "score": 7})
 
     content = path.read_text(encoding="utf-8")
     assert '"nimi": "Ääkkönen"' in content
@@ -68,8 +70,8 @@ def test_append_log_writes_jsonl_with_newline(tmp_path, monkeypatch) -> None:
         tmp_path, monkeypatch
     )
 
-    main._append_log({"title": "Ää", "score": 5})
-    main._append_log({"title": "Toinen", "score": 8})
+    state_store._append_log({"title": "Ää", "score": 5})
+    state_store._append_log({"title": "Toinen", "score": 8})
 
     raw = score_log_path.read_text(encoding="utf-8")
     assert raw.endswith("\n")
@@ -90,7 +92,7 @@ def test_append_flagged_appends_existing_items(tmp_path, monkeypatch) -> None:
         encoding="utf-8",
     )
 
-    main._append_flagged({"id": "b", "score": 8})
+    state_store._append_flagged({"id": "b", "score": 8})
 
     items = json.loads(flagged_path.read_text(encoding="utf-8"))
     assert [item["id"] for item in items] == ["a", "b"]
@@ -122,7 +124,7 @@ def test_record_result_populates_seen_and_log_payload(tmp_path, monkeypatch) -> 
     def _capture_log(entry: dict) -> None:
         captured_logs.append(entry)
 
-    monkeypatch.setattr(main, "_append_log", _capture_log)
+    monkeypatch.setattr(lausunto_workflow, "_append_log", _capture_log)
 
     class FixedDateTime:
         @staticmethod
@@ -130,7 +132,7 @@ def test_record_result_populates_seen_and_log_payload(tmp_path, monkeypatch) -> 
             assert tz is main.UTC
             return datetime(2026, 1, 2, 3, 4, 5, tzinfo=main.UTC)
 
-    monkeypatch.setattr(main, "datetime", FixedDateTime)
+    monkeypatch.setattr(lausunto_workflow, "datetime", FixedDateTime)
 
     proposal = Proposal(
         id="proposal-1",
@@ -149,7 +151,7 @@ def test_record_result_populates_seen_and_log_payload(tmp_path, monkeypatch) -> 
         "jakelu_kuluttajaliitto": False,
     }
 
-    main._record_result(proposal, result, notified=True, seen=seen)
+    lausunto_workflow._record_result(proposal, result, notified=True, seen=seen)
 
     assert seen[proposal.id]["first_seen"] == "2026-01-02T03:04:05+00:00"
     assert seen[proposal.id]["score"] == 6
