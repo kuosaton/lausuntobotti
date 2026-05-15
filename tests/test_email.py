@@ -79,7 +79,21 @@ def test_send_email_propagates_provider_failure(monkeypatch) -> None:
         raise AssertionError("send_email should propagate provider failure")
 
 
-def test_build_daily_digest_contains_key_fields() -> None:
+def test_send_email_refuses_pytest_delivery_without_explicit_test_override(monkeypatch) -> None:
+    monkeypatch.setenv("RESEND_API_KEY", "re_test_key")
+    monkeypatch.setenv("SENDER_EMAIL", "botti@example.com")
+    monkeypatch.setenv("RECIPIENT_EMAIL", "vastaanottaja@example.com")
+    monkeypatch.setattr(resend.Emails, "send", classmethod(email_mod._REAL_RESEND_SEND))
+
+    try:
+        email_mod.send_email(subject="S", html_body="<p>H</p>", text_body="T")
+    except RuntimeError as exc:
+        assert "Refusing to send email while pytest is running" in str(exc)
+    else:
+        raise AssertionError("send_email should refuse delivery during pytest")
+
+
+def test_build_lausuntopyynto_digest_contains_key_fields() -> None:
     published = date.today() - timedelta(days=3)
     deadline = date.today() + timedelta(days=17)
     flagged = [

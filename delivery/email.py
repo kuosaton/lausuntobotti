@@ -8,6 +8,16 @@ import resend
 
 from config import COMMITTEE_DISPLAY_NAMES, COMMITTEE_URLS
 
+_REAL_RESEND_SEND = resend.Emails.send.__func__
+
+
+def _using_real_resend_send() -> bool:
+    current_send = resend.Emails.send
+    return (
+        getattr(current_send, "__self__", None) is resend.Emails
+        and getattr(current_send, "__func__", None) is _REAL_RESEND_SEND
+    )
+
 
 def _fmt_date(d: date | datetime) -> str:
     return f"{d.day}.{d.month}.{d.year}"
@@ -72,6 +82,12 @@ def send_email(subject: str, html_body: str, text_body: str = "") -> str:
     recipients = [a.strip() for a in os.environ.get("RECIPIENT_EMAIL", "").split(",") if a.strip()]
     if not recipients:
         raise ValueError("RECIPIENT_EMAIL must include at least one recipient")
+
+    if os.environ.get("PYTEST_CURRENT_TEST") and _using_real_resend_send():
+        raise RuntimeError(
+            "Refusing to send email while pytest is running. Tests that inspect email "
+            "payloads must stub resend.Emails.send."
+        )
 
     resend.api_key = api_key
 

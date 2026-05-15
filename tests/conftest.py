@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 import pytest
+import resend
 
 import config
 
@@ -16,6 +17,25 @@ def auto_confirm(monkeypatch):
         return "0" if prompt.strip() == ">" else "y"
 
     monkeypatch.setattr("builtins.input", _input)
+
+
+@pytest.fixture(autouse=True)
+def block_real_resend_delivery(monkeypatch):
+    """Fail fast if a test path reaches the real Resend provider.
+
+    Some tests intentionally exercise dry-run and confirmation paths with fake
+    proposal data. Mutation testing can flip those control-flow branches, so the
+    provider must be blocked even when a local .env contains live credentials.
+    Tests that assert email payloads should monkeypatch this method explicitly.
+    """
+
+    def _blocked_send(params):
+        raise AssertionError(
+            "Tests must not contact Resend. Monkeypatch resend.Emails.send or "
+            "the imported send_email function in the module under test."
+        )
+
+    monkeypatch.setattr(resend.Emails, "send", staticmethod(_blocked_send))
 
 
 class StatePaths(NamedTuple):
