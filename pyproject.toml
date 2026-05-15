@@ -56,7 +56,7 @@ strict = ["processing"]
 
 [tool.mutmut]
 paths_to_mutate = ["main.py", "processing/llm_scorer.py"]
-also_copy = ["clients", "delivery", "config.py", "processing"]
+also_copy = ["clients", "delivery", "config.py", "processing", "state_store.py", "utils", "workflows"]
 tests_dir = ["tests"]
 runner = "uv run --extra dev pytest -q"
 do_not_mutate = [
