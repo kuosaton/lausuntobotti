@@ -3,10 +3,12 @@ from __future__ import annotations
 import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
+from urllib.parse import quote_plus
 
 import httpx
 
 VASKI_URL = "https://avoindata.eduskunta.fi/api/v1/tables/VaskiData/rows"
+MATTER_URL_BASE = "https://www.eduskunta.fi/valtiopaivaasiat"
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; lausuntobotti/1.0)"}
 
@@ -125,3 +127,12 @@ def parse_agenda_matters(xml: str) -> list[Matter]:
             )
         )
     return matters
+
+
+def build_matter_url(eduskuntatunnus: str) -> str:
+    """Build the public Eduskunta matter page URL for identifiers like HE 61/2026 vp."""
+    normalized = re.sub(r"\s+vp$", "", eduskuntatunnus.strip(), flags=re.IGNORECASE)
+    normalized = re.sub(r"\s+", " ", normalized)
+    if not normalized:
+        return ""
+    return f"{MATTER_URL_BASE}/{quote_plus(normalized, safe='/')}"

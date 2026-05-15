@@ -6,6 +6,7 @@ import pytest
 from clients.eduskunta import (
     HEADERS,
     VASKI_URL,
+    build_matter_url,
     extract_documents,
     fetch_agenda_xml,
     fetch_committee_page,
@@ -69,6 +70,18 @@ def test_parse_agenda_matters_returns_only_scheduled_matters() -> None:
     assert [matter.eduskuntatunnus for matter in matters] == ["HE 37/2026 vp", "U 27/2026 vp"]
     assert matters[0].title == "Hallituksen esitys kuluttajansuojasta"
     assert matters[0].type == "Hallituksen esitys"
+
+
+@pytest.mark.parametrize(
+    "eduskuntatunnus, expected",
+    [
+        ("HE 61/2026 vp", "https://www.eduskunta.fi/valtiopaivaasiat/HE+61/2026"),
+        (" U 27/2026 vp ", "https://www.eduskunta.fi/valtiopaivaasiat/U+27/2026"),
+        ("", ""),
+    ],
+)
+def test_build_matter_url(eduskuntatunnus, expected) -> None:
+    assert build_matter_url(eduskuntatunnus) == expected
 
 
 def test_fetch_committee_page_sends_browser_user_agent() -> None:
