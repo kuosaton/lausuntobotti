@@ -11,6 +11,7 @@ _DISPATCHABLE_COMMANDS = (
     "cmd_review_logged",
     "cmd_preview_digest",
     "cmd_resend_digest",
+    "cmd_resend_valiokunta_digest",
     "cmd_reset_state",
 )
 
@@ -41,6 +42,12 @@ def _menu_input(inputs: list[str]):
         (["--valiokunta", "--dry-run"], "cmd_valiokunta", (True,)),
         (["--resend-digest"], "cmd_resend_digest", (False, 7)),
         (["--resend-digest", "--dry-run", "--days", "14"], "cmd_resend_digest", (True, 14)),
+        (["--resend-valiokunta-digest"], "cmd_resend_valiokunta_digest", (False, 7)),
+        (
+            ["--resend-valiokunta-digest", "--dry-run", "--days", "14"],
+            "cmd_resend_valiokunta_digest",
+            (True, 14),
+        ),
         (["--review-logged"], "cmd_review_logged", (7, "lausuntopyynnot")),
         (
             ["--review-logged", "--source", "valiokunta", "--days", "14"],
@@ -102,6 +109,7 @@ def test_main_dispatches_all_selected_flags(monkeypatch) -> None:
             "3",
             "--preview-digest",
             "--resend-digest",
+            "--resend-valiokunta-digest",
             "--dry-run",
         ],
     )
@@ -114,6 +122,7 @@ def test_main_dispatches_all_selected_flags(monkeypatch) -> None:
     assert called["cmd_review_logged"][1] == {"days": 3, "source": "both"}
     assert called["cmd_preview_digest"][1] == {"days": 3}
     assert called["cmd_resend_digest"][1] == {"dry_run": True, "days": 3}
+    assert called["cmd_resend_valiokunta_digest"][1] == {"dry_run": True, "days": 3}
 
 
 def test_main_without_flags_launches_interactive(monkeypatch) -> None:
@@ -126,8 +135,8 @@ def test_main_without_flags_launches_interactive(monkeypatch) -> None:
     [
         (["1", "0"], "cmd_lausuntopyynnot", (False,)),
         (["2", "0"], "cmd_valiokunta", (False,)),
-        (["4", "0"], "cmd_preview_digest", ()),
-        (["5", "0"], "cmd_resend_digest", (False,)),
+        (["4", "0"], "cmd_resend_digest", (False,)),
+        (["5", "0"], "cmd_resend_valiokunta_digest", (False,)),
         (["6", "0"], "cmd_update_context", ()),
         (["r", "0"], "cmd_reset_state", ()),
     ],

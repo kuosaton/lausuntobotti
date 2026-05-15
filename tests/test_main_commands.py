@@ -662,6 +662,244 @@ def test_cmd_review_logged_can_show_both_sources_grouped(state_paths, capsys) ->
     assert "Valiokunta-asia" in out
 
 
+def test_cmd_resend_valiokunta_digest_renders_recent_log_entries_in_committee_order(
+    state_paths,
+    capsys,
+) -> None:
+    now = datetime.now(main.UTC)
+    old = now - timedelta(days=10)
+    entries = [
+        {
+            "timestamp": now.isoformat(),
+            "source": "ymparistovaliokunta",
+            "id": "YmVE 1/2026 vp",
+            "title": "Ympäristövaliokunnan rajatapaus",
+            "score": 5,
+            "rationale": "Mahdollinen asumiskytkentä.",
+            "themes": ["asuminen"],
+        },
+        {
+            "timestamp": now.isoformat(),
+            "source": "talousvaliokunta",
+            "id": "HE 61/2026 vp",
+            "title": "Talousvaliokunnan nosto",
+            "score": 8,
+            "rationale": "Suora kuluttajansuojakytkentä.",
+            "themes": ["kuluttajansuoja"],
+        },
+        {
+            "timestamp": now.isoformat(),
+            "source": "maa_ja_metsatalousvaliokunta",
+            "id": "HE 62/2026 vp",
+            "title": "Maa- ja metsätalousvaliokunnan nosto",
+            "score": 7,
+            "rationale": "Kuluttajien elintarviketurvallisuus.",
+            "themes": ["elintarviketurvallisuus"],
+        },
+        {
+            "timestamp": now.isoformat(),
+            "source": "talousvaliokunta",
+            "id": "TaVE 2/2026 vp",
+            "title": "Pudotettu valiokunta-asia",
+            "score": 1,
+            "rationale": "Ei kuluttajakytkentää.",
+            "themes": [],
+        },
+        {
+            "timestamp": old.isoformat(),
+            "source": "talousvaliokunta",
+            "id": "TaVE old/2026 vp",
+            "title": "Vanha valiokunta-asia",
+            "score": 9,
+            "rationale": "Vanha.",
+            "themes": [],
+        },
+    ]
+    state_paths.valiokunta_score_log.write_text(
+        "\n".join(json.dumps(e, ensure_ascii=False) for e in entries) + "\n",
+        encoding="utf-8",
+    )
+
+    main.cmd_resend_valiokunta_digest(dry_run=True, days=7)
+    out = capsys.readouterr().out
+
+    assert "DRY RUN" in out
+    assert "Talousvaliokunnan nosto" in out
+    assert "Maa- ja metsätalousvaliokunnan nosto" in out
+    assert "Ympäristövaliokunnan rajatapaus" in out
+    assert "https://www.eduskunta.fi/valtiopaivaasiat/HE+61/2026" in out
+    assert "https://www.eduskunta.fi/valtiopaivaasiat/HE+62/2026" in out
+    assert "Pudotettu valiokunta-asia" not in out
+    assert "Vanha valiokunta-asia" not in out
+    assert "Arvioitu yhteensä: 4 asiaa" in out
+    assert out.index("TALOUSVALIOKUNTA") < out.index("MAA- JA METSÄTALOUSVALIOKUNTA")
+    assert out.index("MAA- JA METSÄTALOUSVALIOKUNTA") < out.index("YMPÄRISTÖVALIOKUNTA")
+
+
+def test_cmd_resend_valiokunta_digest_sends_email_from_log(
+    state_paths,
+    monkeypatch,
+) -> None:
+    now = datetime.now(main.UTC).isoformat()
+    state_paths.valiokunta_score_log.write_text(
+        json.dumps(
+            {
+                "timestamp": now,
+                "source": "talousvaliokunta",
+                "id": "HE 61/2026 vp",
+                "title": "Lähetettävä valiokunta-asia",
+                "score": 8,
+                "rationale": "R",
+                "themes": [],
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    captured: dict = {}
+    monkeypatch.setenv("RECIPIENT_EMAIL", "vastaanottaja@example.com")
+    monkeypatch.setattr("builtins.input", lambda _: "y")
+    monkeypatch.setattr(
+        main,
+        "send_email",
+        lambda subject, html_body, text_body: (
+            captured.update({"subject": subject, "html": html_body, "text": text_body})
+            or "email-id"
+        ),
+    )
+
+    main.cmd_resend_valiokunta_digest(dry_run=False, days=7)
+
+    assert captured["subject"].startswith("Lausuntobotin valiokuntakatsaus")
+    assert "Lähetettävä valiokunta-asia" in captured["text"]
+    assert "https://www.eduskunta.fi/valtiopaivaasiat/HE+61/2026" in captured["text"]
+    assert "Lähetettävä valiokunta-asia" in captured["html"]
+    assert 'href="https://www.eduskunta.fi/valtiopaivaasiat/HE+61/2026"' in captured["html"]
+
+
+def test_load_valiokunta_digest_keeps_missing_and_unknown_committee_sources(
+    state_paths,
+) -> None:
+    now = datetime.now(main.UTC).isoformat()
+    entries = [
+        {
+            "timestamp": now,
+            "id": "MISSING 1/2026 vp",
+            "title": "Puuttuva lähde",
+            "score": 8,
+            "rationale": "R",
+        },
+        {
+            "timestamp": now,
+            "source": "muuvaliokunta",
+            "id": "MuuV 1/2026 vp",
+            "title": "Tuntematon valiokunta",
+            "score": 5,
+            "rationale": "R",
+        },
+    ]
+    state_paths.valiokunta_score_log.write_text(
+        "\n".join(json.dumps(e, ensure_ascii=False) for e in entries) + "\n",
+        encoding="utf-8",
+    )
+
+    committee_items, borderline_items, total_scored, total_logged = main._load_valiokunta_digest()
+
+    assert total_scored == 2
+    assert total_logged == 1
+    assert committee_items["valiokunta"][0]["title"] == "Puuttuva lähde"
+    assert borderline_items["muuvaliokunta"][0]["title"] == "Tuntematon valiokunta"
+
+
+def test_cmd_resend_valiokunta_digest_declined_send_does_not_send(
+    state_paths,
+    monkeypatch,
+    capsys,
+) -> None:
+    now = datetime.now(main.UTC).isoformat()
+    state_paths.valiokunta_score_log.write_text(
+        json.dumps(
+            {
+                "timestamp": now,
+                "source": "talousvaliokunta",
+                "id": "TaVE 1/2026 vp",
+                "title": "Ei lähetetä",
+                "score": 8,
+                "rationale": "R",
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("builtins.input", lambda _: "n")
+
+    def _should_not_send(*args, **kwargs):
+        raise AssertionError("send_email should not run after declined send")
+
+    monkeypatch.setattr(main, "send_email", _should_not_send)
+
+    main.cmd_resend_valiokunta_digest(dry_run=False, days=7)
+
+    assert "Aborted." in capsys.readouterr().out
+
+
+def test_cmd_resend_valiokunta_digest_reports_send_failure(
+    state_paths,
+    monkeypatch,
+    capsys,
+) -> None:
+    now = datetime.now(main.UTC).isoformat()
+    state_paths.valiokunta_score_log.write_text(
+        json.dumps(
+            {
+                "timestamp": now,
+                "source": "talousvaliokunta",
+                "id": "TaVE 1/2026 vp",
+                "title": "Lähetys epäonnistuu",
+                "score": 8,
+                "rationale": "R",
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("builtins.input", lambda _: "y")
+    monkeypatch.setattr(
+        main,
+        "send_email",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("resend down")),
+    )
+
+    main.cmd_resend_valiokunta_digest(dry_run=False, days=7)
+
+    assert "ERROR: email delivery failed: resend down" in capsys.readouterr().err
+
+
+def test_cmd_resend_valiokunta_digest_no_content(state_paths, capsys) -> None:
+    now = datetime.now(main.UTC).isoformat()
+    state_paths.valiokunta_score_log.write_text(
+        json.dumps(
+            {
+                "timestamp": now,
+                "source": "talousvaliokunta",
+                "title": "Pudotettu",
+                "score": 1,
+                "rationale": "R",
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    main.cmd_resend_valiokunta_digest(dry_run=True, days=7)
+
+    assert "nothing to send" in capsys.readouterr().out.lower()
+
+
 def test_load_borderline_invalid_dates_normalize_to_none(state_paths) -> None:
     now = datetime.now(main.UTC).isoformat()
     entry = {

@@ -6,7 +6,7 @@ from typing import TypedDict
 
 import resend
 
-from config import COMMITTEE_DISPLAY_NAMES
+from config import COMMITTEE_DISPLAY_NAMES, COMMITTEE_URLS
 
 
 def _fmt_date(d: date | datetime) -> str:
@@ -251,7 +251,7 @@ def _weekly_text_body(
     total_flagged: int,
     summary_lines: list[str],
 ) -> str:
-    lines = [f"Viikkokatsaus, vko {week_number}\n"]
+    lines = [f"Lausuntobotin valiokuntakatsaus, vko {week_number}\n"]
     for key, items in committee_items.items():
         borderline = borderline_items.get(key, [])
         name = _committee_display_name(key)
@@ -371,6 +371,12 @@ def _committee_display_name(key: str) -> str:
     return COMMITTEE_DISPLAY_NAMES.get(key, key)
 
 
+def _order_committee_mapping(items: dict[str, list[dict]]) -> dict[str, list[dict]]:
+    ordered = {key: items[key] for key in COMMITTEE_URLS if key in items}
+    ordered.update({key: value for key, value in items.items() if key not in ordered})
+    return ordered
+
+
 def build_weekly_digest(
     committee_items: dict[str, list[dict]],
     week_number: int,
@@ -378,8 +384,10 @@ def build_weekly_digest(
     total_logged: int,
     borderline_items: dict[str, list[dict]] | None = None,
 ) -> tuple[str, str, str]:
-    subject = f"Lausuntobotin viikkokatsaus, vko {week_number}"
+    subject = f"Lausuntobotin valiokuntakatsaus, vko {week_number}"
+    committee_items = _order_committee_mapping(committee_items)
     borderline_items = borderline_items or {key: [] for key in committee_items}
+    borderline_items = _order_committee_mapping(borderline_items)
     committee_items = {key: _sort_weekly_items(items) for key, items in committee_items.items()}
     borderline_items = {
         key: _sort_weekly_items(borderline_items.get(key, [])) for key in committee_items

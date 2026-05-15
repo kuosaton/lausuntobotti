@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
@@ -13,8 +14,9 @@ import httpx
 from dotenv import load_dotenv
 
 import config
+from clients.eduskunta import build_matter_url
 from clients.kuluttajaliitto import build_context, fetch_statements
-from delivery.email import build_daily_digest
+from delivery.email import build_daily_digest, build_weekly_digest, send_email
 from processing.score_classification import classify_score
 from state_store import (
     _load_context,
@@ -108,6 +110,15 @@ def cmd_weekly(dry_run: bool) -> None:
 
 def _read_borderline_entries(days: int = 7, source: str = _SOURCE_LAUSUNTOPYYNNOT) -> list[dict]:
     """Return raw score-log dicts for borderline items within the last `days` days."""
+    return [
+        entry
+        for entry in _read_recent_score_entries(days, source=source)
+        if classify_score(entry.get("score", 0)) == "log"
+    ]
+
+
+def _read_recent_score_entries(days: int = 7, source: str = _SOURCE_LAUSUNTOPYYNNOT) -> list[dict]:
+    """Return raw score-log dicts within the last `days` days."""
     _migrate_score_log_split()
     path = _score_log_path(source)
     if not path.exists():
@@ -123,7 +134,6 @@ def _read_borderline_entries(days: int = 7, source: str = _SOURCE_LAUSUNTOPYYNNO
                 entry = json.loads(stripped)
             except json.JSONDecodeError:
                 continue
-            score = entry.get("score", 0)
             timestamp = entry.get("timestamp")
             if not isinstance(timestamp, str):
                 continue
@@ -133,8 +143,7 @@ def _read_borderline_entries(days: int = 7, source: str = _SOURCE_LAUSUNTOPYYNNO
                 continue
             if ts.timestamp() < cutoff:
                 continue
-            if classify_score(score) == "log":
-                entries.append(entry)
+            entries.append(entry)
     return entries
 
 
@@ -271,6 +280,108 @@ def cmd_resend_digest(dry_run: bool, days: int = 7) -> None:
     _deliver_digest(flagged, dry_run, borderline=borderline)
 
 
+def _empty_committee_items() -> dict[str, list[dict]]:
+    return {key: [] for key in config.COMMITTEE_URLS}
+
+
+def _build_committee_item(entry: dict) -> dict:
+    identifier = entry.get("id")
+    eduskuntatunnus = identifier if isinstance(identifier, str) and identifier else "-"
+    url = entry.get("url")
+    if not isinstance(url, str) or not url:
+        url = build_matter_url(eduskuntatunnus if eduskuntatunnus != "-" else "")
+    return {
+        "title": entry.get("title", ""),
+        "eduskuntatunnus": eduskuntatunnus,
+        "score": entry.get("score", 0),
+        "rationale": entry.get("rationale", ""),
+        "themes": entry.get("themes", []),
+        "url": url,
+    }
+
+
+def _load_valiokunta_digest(
+    days: int = 7,
+) -> tuple[dict[str, list[dict]], dict[str, list[dict]], int, int]:
+    committee_items = _empty_committee_items()
+    borderline_items = _empty_committee_items()
+    total_scored = 0
+    total_logged = 0
+
+    for entry in _read_recent_score_entries(days, source=_SOURCE_VALIOKUNTA):
+        total_scored += 1
+        committee_key = entry.get("source")
+        if not isinstance(committee_key, str) or not committee_key:
+            committee_key = _SOURCE_VALIOKUNTA
+        if committee_key not in committee_items:
+            committee_items[committee_key] = []
+            borderline_items[committee_key] = []
+
+        item = _build_committee_item(entry)
+        band = classify_score(item["score"])
+        if band == "flag":
+            committee_items[committee_key].append(item)
+        elif band == "log":
+            total_logged += 1
+            borderline_items[committee_key].append(item)
+
+    return committee_items, borderline_items, total_scored, total_logged
+
+
+def _deliver_valiokunta_digest(
+    committee_items: dict[str, list[dict]],
+    borderline_items: dict[str, list[dict]],
+    total_scored: int,
+    total_logged: int,
+    dry_run: bool,
+) -> bool:
+    total_flagged = sum(len(items) for items in committee_items.values())
+    week_number = datetime.now(UTC).isocalendar().week
+    subject, html_body, text_body = build_weekly_digest(
+        committee_items,
+        week_number,
+        total_scored,
+        total_logged,
+        borderline_items=borderline_items,
+    )
+    print(f"\nSubject: {subject}")
+    print(text_body)
+    if dry_run:
+        print(f"\n--- DRY RUN: would send valiokunta digest ({total_flagged} flagged) ---")
+        return False
+
+    recipient = os.environ.get("RECIPIENT_EMAIL", "?")
+    answer = input(f"\nSend to {recipient}? [Y/n] ").strip().lower()
+    if answer not in ("", "y"):
+        print("Aborted.")
+        return False
+    try:
+        send_email(subject=subject, html_body=html_body, text_body=text_body)
+    except Exception as exc:
+        print(f"ERROR: email delivery failed: {exc}", file=sys.stderr)
+        return False
+    print(f"Valiokunta digest sent to {recipient}")
+    return True
+
+
+def cmd_resend_valiokunta_digest(dry_run: bool, days: int = 7) -> None:
+    """Resend the valiokunta digest from recent score-log entries."""
+    committee_items, borderline_items, total_scored, total_logged = _load_valiokunta_digest(
+        days=days
+    )
+    total_flagged = sum(len(items) for items in committee_items.values())
+    if total_flagged == 0 and total_logged == 0:
+        print("Nothing to send: no flagged valiokunta items and no borderline items.")
+        return
+    _deliver_valiokunta_digest(
+        committee_items,
+        borderline_items,
+        total_scored,
+        total_logged,
+        dry_run,
+    )
+
+
 def cmd_reset_state() -> None:
     print(
         "This will erase all state: seen proposals, seen documents, score logs, and flagged items."
@@ -317,6 +428,13 @@ def _run_resend(dry_run: bool, days: int | None = None) -> None:
         cmd_resend_digest(dry_run=dry_run, days=days)
 
 
+def _run_resend_valiokunta(dry_run: bool, days: int | None = None) -> None:
+    if days is None:
+        cmd_resend_valiokunta_digest(dry_run=dry_run)
+    else:
+        cmd_resend_valiokunta_digest(dry_run=dry_run, days=days)
+
+
 def _dispatch_cli(args: argparse.Namespace) -> None:
     actions: list[tuple[str, Callable[[], None]]] = [
         ("update_context", cmd_update_context),
@@ -325,6 +443,7 @@ def _dispatch_cli(args: argparse.Namespace) -> None:
         ("review_logged", lambda: _run_review(args.days, args.source)),
         ("preview_digest", lambda: _run_preview(args.days)),
         ("resend_digest", lambda: _run_resend(args.dry_run, args.days)),
+        ("resend_valiokunta_digest", lambda: _run_resend_valiokunta(args.dry_run, args.days)),
         ("reset_state", cmd_reset_state),
         ("interactive", cmd_interactive),
     ]
@@ -360,10 +479,10 @@ def _menu_items() -> list[_MenuItem]:
             "key": "2",
             "label": "Valiokunta check",
             "description": [
-                "Fetch new Talousvaliokunta agendas, score scheduled",
+                "Fetch new priority committee agendas, score scheduled",
                 "matters, and ask before sending the valiokunta digest.",
-                "Maa- ja metsätalousvaliokunta and Ympäristövaliokunta",
-                "support is planned next.",
+                "Digest sections are ordered Talousvaliokunta,",
+                "Maa- ja metsätalousvaliokunta, Ympäristövaliokunta.",
             ],
             "action": _menu_valiokunta,
         },
@@ -375,21 +494,21 @@ def _menu_items() -> list[_MenuItem]:
         },
         {
             "key": "4",
-            "label": "Preview lausuntopyyntö digest",
+            "label": "Preview / resend lausuntopyyntö digest",
             "description": [
-                "Print the current lausuntopyyntö digest (flagged items +",
-                "recent borderline) as plain text. No email sent.",
+                "Show the current lausuntopyyntö digest, then ask before",
+                "sending. Does not re-run scoring.",
             ],
-            "action": _run_preview,
+            "action": lambda: _run_resend(dry_run=False),
         },
         {
             "key": "5",
-            "label": "Resend lausuntopyyntö digest",
+            "label": "Preview / resend valiokunta digest",
             "description": [
-                "Send the lausuntopyyntö digest email without re-running",
-                "scoring. Useful for testing delivery or resending.",
+                "Show the valiokunta digest from recent score-log entries,",
+                "then ask before sending. Does not re-run scoring.",
             ],
-            "action": lambda: _run_resend(dry_run=False),
+            "action": lambda: _run_resend_valiokunta(dry_run=False),
         },
         {
             "key": "6",
@@ -559,7 +678,7 @@ def main() -> None:
         "--days",
         type=int,
         default=7,
-        help="Days to look back for --review-logged and lausuntopyyntö digest preview/resend (default: 7)",
+        help="Days to look back for review and digest preview/resend commands (default: 7)",
     )
     parser.add_argument(
         "--preview-digest",
@@ -570,6 +689,11 @@ def main() -> None:
         "--resend-digest",
         action="store_true",
         help="Send lausuntopyyntö digest email without re-running scoring",
+    )
+    parser.add_argument(
+        "--resend-valiokunta-digest",
+        action="store_true",
+        help="Send valiokunta digest email from recent score log without re-running scoring",
     )
     parser.add_argument(
         "--reset-state",
@@ -591,6 +715,7 @@ def main() -> None:
             args.review_logged,
             args.preview_digest,
             args.resend_digest,
+            args.resend_valiokunta_digest,
             args.reset_state,
             args.interactive,
         ]

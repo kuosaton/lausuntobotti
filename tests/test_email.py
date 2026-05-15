@@ -279,6 +279,55 @@ def test_build_weekly_digest_handles_empty_and_linked_items() -> None:
     assert "https://example.invalid/doc/1" in html_body
 
 
+def test_build_weekly_digest_renders_all_priority_committee_sections() -> None:
+    committee_items = {
+        "ymparistovaliokunta": [],
+        "maa_ja_metsatalousvaliokunta": [],
+        "talousvaliokunta": [
+            {
+                "eduskuntatunnus": "TaVE 1/2026 vp",
+                "title": "Kuluttajansuojalain muutos",
+                "score": 8,
+                "rationale": "Suora kuluttajavaikutus.",
+                "themes": ["kuluttajansuoja"],
+                "url": "",
+            }
+        ],
+    }
+    borderline_items = {
+        "talousvaliokunta": [],
+        "maa_ja_metsatalousvaliokunta": [
+            {
+                "eduskuntatunnus": "MmVE 1/2026 vp",
+                "title": "Elintarviketurvallisuuden valvonta",
+                "score": 5,
+                "rationale": "Mahdollinen yhteys kuluttajien turvallisuuteen.",
+                "themes": ["elintarviketurvallisuus"],
+                "url": "",
+            }
+        ],
+        "ymparistovaliokunta": [],
+    }
+
+    _subject, html_body, text_body = email_mod.build_weekly_digest(
+        committee_items=committee_items,
+        week_number=17,
+        total_scored=3,
+        total_logged=1,
+        borderline_items=borderline_items,
+    )
+
+    assert "TALOUSVALIOKUNTA" in text_body
+    assert "MAA- JA METSÄTALOUSVALIOKUNTA" in text_body
+    assert "YMPÄRISTÖVALIOKUNTA" in text_body
+    assert "Talousvaliokunta" in html_body
+    assert "Maa- ja metsätalousvaliokunta" in html_body
+    assert "Ympäristövaliokunta" in html_body
+    assert "Elintarviketurvallisuuden valvonta" in text_body
+    assert text_body.index("TALOUSVALIOKUNTA") < text_body.index("MAA- JA METSÄTALOUSVALIOKUNTA")
+    assert text_body.index("MAA- JA METSÄTALOUSVALIOKUNTA") < text_body.index("YMPÄRISTÖVALIOKUNTA")
+
+
 def test_build_weekly_digest_renders_borderline_items() -> None:
     committee_items = {"talousvaliokunta": []}
     borderline_items = {
