@@ -30,6 +30,26 @@ def _menu_input(inputs: list[str]):
     return _fake
 
 
+def test_load_runtime_env_skips_dotenv_under_pytest(monkeypatch) -> None:
+    called = {"load": False}
+    monkeypatch.setenv("PYTEST_CURRENT_TEST", "test")
+    monkeypatch.setattr(main, "load_dotenv", lambda: called.__setitem__("load", True))
+
+    main._load_runtime_env()
+
+    assert called["load"] is False
+
+
+def test_load_runtime_env_loads_dotenv_outside_pytest(monkeypatch) -> None:
+    called = {"load": False}
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    monkeypatch.setattr(main, "load_dotenv", lambda: called.__setitem__("load", True))
+
+    main._load_runtime_env()
+
+    assert called["load"] is True
+
+
 @pytest.mark.parametrize(
     "argv, cmd_attr, expected_call",
     [

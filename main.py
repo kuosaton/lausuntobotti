@@ -31,10 +31,14 @@ from workflows.lausuntopyynnot import (
 )
 from workflows.valiokunta import cmd_valiokunta as _run_valiokunta_workflow
 
-load_dotenv()
-
 _SOURCE_LAUSUNTOPYYNNOT = "lausuntopyynnot"
 _SOURCE_VALIOKUNTA = "valiokunta"
+
+
+def _load_runtime_env() -> None:
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        return
+    load_dotenv()
 
 
 def _context_has_statements(ctx: dict) -> bool:
@@ -642,6 +646,8 @@ def cmd_interactive() -> None:
 
 
 def main() -> None:
+    _load_runtime_env()
+
     parser = argparse.ArgumentParser(description="Lausuntobotti – Kuluttajaliitto monitoring tool")
     parser.add_argument(
         "--lausuntopyynnot",
