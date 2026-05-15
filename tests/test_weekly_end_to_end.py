@@ -17,7 +17,6 @@ import config
 import main
 import workflows.valiokunta as valiokunta_workflow
 
-
 COMMITTEE_HTML = """
 <script>
 {edktunnus:"EDK-2026-AK-40",eduskuntatunnus:"TaVE 40/2026 vp",asiakirjatyyppinimi:"Esityslista",asiakirjatyyppikoodi:"TaVE",nimeketeksti:"Tiistai 28.4.2026 klo 12.00",valiokuntanimi:null,laadintapvm:"2026-04-28",viimeisinJulkaisuajankohta:"2026-04-24T11:21:24.988+00:00"}
@@ -69,6 +68,7 @@ def test_cmd_weekly_full_pipeline_renders_real_digest(state_paths, monkeypatch) 
     )
 
     monkeypatch.setattr(config, "SEEN_DOCUMENTS_PATH", seen_documents)
+    monkeypatch.setattr(valiokunta_workflow, "_WEEKLY_COMMITTEES", ("talousvaliokunta",))
     monkeypatch.setenv("SENDER_EMAIL", "botti@example.com")
     monkeypatch.setenv("RECIPIENT_EMAIL", "vastaanottaja@example.com")
     monkeypatch.setenv("RESEND_API_KEY", "re_test_key")
@@ -116,7 +116,7 @@ def test_cmd_weekly_full_pipeline_renders_real_digest(state_paths, monkeypatch) 
     assert captured_email["to"] == ["vastaanottaja@example.com"]
 
     week_number = date.today().isocalendar().week
-    assert captured_email["subject"] == f"Lausuntobotin viikkokatsaus, vko {week_number}"
+    assert captured_email["subject"] == f"Lausuntobotin valiokuntakatsaus, vko {week_number}"
 
     text = captured_email["text"]
     html = captured_email["html"]
@@ -126,7 +126,9 @@ def test_cmd_weekly_full_pipeline_renders_real_digest(state_paths, monkeypatch) 
     assert "HE 37/2026 vp" in text
     assert "Relevanssi: 9/10" in text
     assert "Suora kuluttajansuojaosuma." in text
+    assert "https://www.eduskunta.fi/valtiopaivaasiat/HE+37/2026" in text
     assert "Hallituksen esitys kuluttajansuojalain muuttamisesta" in html
+    assert 'href="https://www.eduskunta.fi/valtiopaivaasiat/HE+37/2026"' in html
     assert "kuluttajansuoja, sopimusehdot" in html
 
     assert "Rajatapauksia" in text
@@ -157,3 +159,8 @@ def test_cmd_weekly_full_pipeline_renders_real_digest(state_paths, monkeypatch) 
         "HE 99/2026 vp",
     }
     assert all(entry["source"] == "talousvaliokunta" for entry in log_entries)
+    assert {entry["url"] for entry in log_entries} == {
+        "https://www.eduskunta.fi/valtiopaivaasiat/HE+37/2026",
+        "https://www.eduskunta.fi/valtiopaivaasiat/U+27/2026",
+        "https://www.eduskunta.fi/valtiopaivaasiat/HE+99/2026",
+    }

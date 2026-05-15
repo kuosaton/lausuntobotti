@@ -9,7 +9,11 @@ import workflows.valiokunta as valiokunta_workflow
 from clients.eduskunta import Document, Matter
 
 
-def _setup_weekly_state(state_paths, monkeypatch):
+def _setup_weekly_state(
+    state_paths,
+    monkeypatch,
+    weekly_committees: tuple[str, ...] | None = ("talousvaliokunta",),
+):
     seen_documents = state_paths.seen.parent / "seen_documents.json"
     seen_documents.write_text("{}", encoding="utf-8")
     state_paths.context.write_text(
@@ -17,6 +21,8 @@ def _setup_weekly_state(state_paths, monkeypatch):
         encoding="utf-8",
     )
     monkeypatch.setattr(config, "SEEN_DOCUMENTS_PATH", seen_documents)
+    if weekly_committees is not None:
+        monkeypatch.setattr(valiokunta_workflow, "_WEEKLY_COMMITTEES", weekly_committees)
     return seen_documents
 
 
@@ -52,6 +58,202 @@ def test_cmd_weekly_no_new_agendas_exits_cleanly(state_paths, monkeypatch, capsy
     main.cmd_weekly(dry_run=True)
 
     assert "No new committee agendas" in capsys.readouterr().out
+
+
+def test_cmd_weekly_fetches_all_priority_committees_by_default(
+    state_paths,
+    monkeypatch,
+    capsys,
+) -> None:
+    _setup_weekly_state(state_paths, monkeypatch, weekly_committees=None)
+    fetched_urls = []
+
+    def _fetch_page(client, url):
+        fetched_urls.append(url)
+        return "<html/>"
+
+    monkeypatch.setattr(valiokunta_workflow, "fetch_committee_page", _fetch_page)
+    monkeypatch.setattr(valiokunta_workflow, "extract_documents", lambda html: [])
+
+    main.cmd_weekly(dry_run=True)
+
+    assert fetched_urls == [config.COMMITTEE_URLS[key] for key in config.COMMITTEE_URLS]
+    out = capsys.readouterr().out
+    assert "Fetching Talousvaliokunta" in out
+    assert "Fetching Maa- ja metsätalousvaliokunta" in out
+    assert "Fetching Ympäristövaliokunta" in out
+
+
+def test_cmd_weekly_scores_and_logs_multiple_committees_by_default(
+    state_paths,
+    monkeypatch,
+) -> None:
+    seen_documents = _setup_weekly_state(state_paths, monkeypatch, weekly_committees=None)
+    doc_by_url = {
+        config.COMMITTEE_URLS["talousvaliokunta"]: _doc(
+            edktunnus="EDK-tav",
+            eduskuntatunnus="TaVE 1/2026 vp",
+            tyyppikoodi="TaVE",
+        ),
+        config.COMMITTEE_URLS["maa_ja_metsatalousvaliokunta"]: _doc(
+            edktunnus="EDK-mmv",
+            eduskuntatunnus="MmVE 1/2026 vp",
+            tyyppikoodi="MmVE",
+        ),
+        config.COMMITTEE_URLS["ymparistovaliokunta"]: _doc(
+            edktunnus="EDK-ymv",
+            eduskuntatunnus="YmVE 1/2026 vp",
+            tyyppikoodi="YmVE",
+        ),
+    }
+    matter_by_agenda = {
+        "TaVE 1/2026 vp": _matter(eduskuntatunnus="HE 1/2026 vp", title="TaV asia"),
+        "MmVE 1/2026 vp": _matter(eduskuntatunnus="HE 2/2026 vp", title="MmV asia"),
+        "YmVE 1/2026 vp": _matter(eduskuntatunnus="HE 3/2026 vp", title="YmV asia"),
+    }
+    scores_by_title = {"TaV asia": 1, "MmV asia": 8, "YmV asia": 5}
+    captured_digest: dict = {}
+
+    monkeypatch.setattr(valiokunta_workflow, "fetch_committee_page", lambda client, url: url)
+    monkeypatch.setattr(
+        valiokunta_workflow,
+        "extract_documents",
+        lambda html: [doc_by_url[html]],
+    )
+    monkeypatch.setattr(valiokunta_workflow, "fetch_agenda_xml", lambda client, tunnus: tunnus)
+    monkeypatch.setattr(
+        valiokunta_workflow,
+        "parse_agenda_matters",
+        lambda xml: [matter_by_agenda[xml]],
+    )
+    monkeypatch.setattr(
+        valiokunta_workflow,
+        "score_item",
+        lambda title, abstract, src, ctx: {
+            "score": scores_by_title[title],
+            "rationale": f"R-{title}",
+            "themes": [],
+        },
+    )
+
+    def _build_digest(items, week, total_scored, total_logged, borderline_items=None):
+        captured_digest.update(
+            {
+                "items": items,
+                "total_scored": total_scored,
+                "total_logged": total_logged,
+                "borderline_items": borderline_items,
+            }
+        )
+        return ("S", "<h/>", "T")
+
+    monkeypatch.setattr(valiokunta_workflow, "build_weekly_digest", _build_digest)
+    monkeypatch.setattr("builtins.input", lambda _: "y")
+
+    main.cmd_weekly(dry_run=True)
+
+    assert captured_digest["total_scored"] == 3
+    assert captured_digest["total_logged"] == 1
+    assert captured_digest["items"]["maa_ja_metsatalousvaliokunta"][0]["title"] == "MmV asia"
+    assert (
+        captured_digest["items"]["maa_ja_metsatalousvaliokunta"][0]["url"]
+        == "https://www.eduskunta.fi/valtiopaivaasiat/HE+2/2026"
+    )
+    assert captured_digest["borderline_items"]["ymparistovaliokunta"][0]["title"] == "YmV asia"
+    assert (
+        captured_digest["borderline_items"]["ymparistovaliokunta"][0]["url"]
+        == "https://www.eduskunta.fi/valtiopaivaasiat/HE+3/2026"
+    )
+
+    seen_docs = json.loads(seen_documents.read_text(encoding="utf-8"))
+    assert set(seen_docs) == {"EDK-tav", "EDK-mmv", "EDK-ymv"}
+
+    log_entries = [
+        json.loads(line)
+        for line in state_paths.valiokunta_score_log.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert {entry["source"] for entry in log_entries} == {
+        "talousvaliokunta",
+        "maa_ja_metsatalousvaliokunta",
+        "ymparistovaliokunta",
+    }
+    assert {entry["url"] for entry in log_entries} == {
+        "https://www.eduskunta.fi/valtiopaivaasiat/HE+1/2026",
+        "https://www.eduskunta.fi/valtiopaivaasiat/HE+2/2026",
+        "https://www.eduskunta.fi/valtiopaivaasiat/HE+3/2026",
+    }
+
+
+def test_cmd_weekly_continues_when_one_committee_page_fails(
+    state_paths,
+    monkeypatch,
+    capsys,
+) -> None:
+    seen_documents = _setup_weekly_state(state_paths, monkeypatch, weekly_committees=None)
+    doc_by_url = {
+        config.COMMITTEE_URLS["talousvaliokunta"]: _doc(
+            edktunnus="EDK-tav",
+            eduskuntatunnus="TaVE 1/2026 vp",
+            tyyppikoodi="TaVE",
+        ),
+        config.COMMITTEE_URLS["ymparistovaliokunta"]: _doc(
+            edktunnus="EDK-ymv",
+            eduskuntatunnus="YmVE 1/2026 vp",
+            tyyppikoodi="YmVE",
+        ),
+    }
+    matter_by_agenda = {
+        "TaVE 1/2026 vp": _matter(eduskuntatunnus="HE 1/2026 vp", title="TaV asia"),
+        "YmVE 1/2026 vp": _matter(eduskuntatunnus="HE 3/2026 vp", title="YmV asia"),
+    }
+
+    def _fetch_page(client, url):
+        if url == config.COMMITTEE_URLS["maa_ja_metsatalousvaliokunta"]:
+            raise RuntimeError("committee page down")
+        return url
+
+    monkeypatch.setattr(valiokunta_workflow, "fetch_committee_page", _fetch_page)
+    monkeypatch.setattr(
+        valiokunta_workflow,
+        "extract_documents",
+        lambda html: [doc_by_url[html]],
+    )
+    monkeypatch.setattr(valiokunta_workflow, "fetch_agenda_xml", lambda client, tunnus: tunnus)
+    monkeypatch.setattr(
+        valiokunta_workflow,
+        "parse_agenda_matters",
+        lambda xml: [matter_by_agenda[xml]],
+    )
+    monkeypatch.setattr(
+        valiokunta_workflow,
+        "score_item",
+        lambda *args, **kwargs: {"score": 8, "rationale": "OK", "themes": []},
+    )
+    monkeypatch.setattr(
+        valiokunta_workflow, "build_weekly_digest", lambda *args, **kwargs: ("S", "<h/>", "T")
+    )
+    monkeypatch.setattr("builtins.input", lambda _: "y")
+
+    main.cmd_weekly(dry_run=True)
+
+    captured = capsys.readouterr()
+    assert (
+        "could not fetch/parse Maa- ja metsätalousvaliokunta: committee page down" in captured.err
+    )
+
+    seen_docs = json.loads(seen_documents.read_text(encoding="utf-8"))
+    assert set(seen_docs) == {"EDK-tav", "EDK-ymv"}
+
+    log_entries = [
+        json.loads(line)
+        for line in state_paths.valiokunta_score_log.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert {entry["source"] for entry in log_entries} == {
+        "talousvaliokunta",
+        "ymparistovaliokunta",
+    }
 
 
 def test_cmd_weekly_skips_already_seen_agendas(state_paths, monkeypatch, capsys) -> None:
@@ -162,6 +364,10 @@ def test_cmd_weekly_dry_run_scores_and_renders_digest(
         "HE 3/2026 vp",
     }
     assert all(entry["source"] == "talousvaliokunta" for entry in log_lines)
+    assert all(
+        entry["url"].startswith("https://www.eduskunta.fi/valtiopaivaasiat/HE+")
+        for entry in log_lines
+    )
 
 
 def test_cmd_weekly_non_dry_run_sends_email(state_paths, monkeypatch) -> None:

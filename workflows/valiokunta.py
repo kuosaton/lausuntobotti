@@ -10,6 +10,7 @@ import config
 from clients.eduskunta import (
     Document,
     Matter,
+    build_matter_url,
     extract_documents,
     fetch_agenda_xml,
     fetch_committee_page,
@@ -20,7 +21,7 @@ from processing.llm_scorer import score_item
 from processing.score_classification import classify_score
 from state_store import _append_log, _load_json, _migrate_score_log_split, _save_json
 
-_WEEKLY_COMMITTEES = ("talousvaliokunta",)
+_WEEKLY_COMMITTEES = tuple(config.COMMITTEE_URLS)
 
 
 def _is_agenda(document: Document) -> bool:
@@ -107,6 +108,7 @@ def _record_weekly_matter(
             "score": result["score"],
             "rationale": result.get("rationale", ""),
             "themes": result.get("themes", []),
+            "url": build_matter_url(matter.eduskuntatunnus),
             "notified": notified,
         },
         path=config.VALIOKUNTA_SCORE_LOG_PATH,
@@ -198,6 +200,7 @@ def cmd_valiokunta(dry_run: bool, ctx: dict | None = None) -> None:  # noqa: PLR
             scored_matters.append((agenda.edktunnus, committee_key, matter, result))
 
             band = classify_score(score)
+            url = build_matter_url(matter.eduskuntatunnus)
             if band == "flag":
                 print(f"  [FLAG {score}/10] {matter.eduskuntatunnus}: {matter.title}")
                 committee_items[committee_key].append(
@@ -207,7 +210,7 @@ def cmd_valiokunta(dry_run: bool, ctx: dict | None = None) -> None:  # noqa: PLR
                         "score": score,
                         "rationale": result.get("rationale", ""),
                         "themes": result.get("themes", []),
-                        "url": "",
+                        "url": url,
                     }
                 )
             elif band == "log":
@@ -220,7 +223,7 @@ def cmd_valiokunta(dry_run: bool, ctx: dict | None = None) -> None:  # noqa: PLR
                         "score": score,
                         "rationale": result.get("rationale", ""),
                         "themes": result.get("themes", []),
-                        "url": "",
+                        "url": url,
                     }
                 )
             else:

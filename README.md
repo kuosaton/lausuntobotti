@@ -89,7 +89,9 @@ uv run python main.py --help
 
 ### Valiokunta Analysis
 
-`--valiokunta` currently tracks new Talousvaliokunta agendas, extracts scheduled matters from VaskiData XML, scores them with the same Kuluttajaliitto context, and sends a digest. Support for Maa- ja metsätalousvaliokunta and Ympäristövaliokunta is planned next. Replay/resend is not persisted yet; use `--valiokunta --dry-run` to preview a fresh run.
+`--valiokunta` tracks new agendas from Talousvaliokunta, Maa- ja metsätalousvaliokunta, and Ympäristövaliokunta. It extracts scheduled matters from VaskiData XML, scores them with the same Kuluttajaliitto context, and sends one committee digest grouped by valiokunta. Digest sections are ordered with Talousvaliokunta first, then Maa- ja metsätalousvaliokunta, then Ympäristövaliokunta.
+
+Use `--resend-valiokunta-digest` to resend the valiokunta digest from recent score-log entries without re-running scoring. Use `--valiokunta --dry-run` or `--resend-valiokunta-digest --dry-run` to preview a fresh or reconstructed run.
 
 ## Development
 

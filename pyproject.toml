@@ -1,6 +1,6 @@
 [project]
 name = "lausuntobotti"
-version = "0.2.0"
+version = "0.4.0"
 requires-python = ">=3.14"
 dependencies = [
     "httpx>=0.28.1",
@@ -62,4 +62,3 @@ runner = "uv run --extra dev pytest -q"
 do_not_mutate = [
     "if __name__ == \"__main__\":"
 ]
-
