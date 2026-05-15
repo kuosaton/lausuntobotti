@@ -8,7 +8,7 @@ import httpx
 
 import config
 from clients.lausuntopalvelu import Proposal, fetch_recent, get_participation_flags
-from delivery.email import build_daily_digest, send_email
+from delivery.email import build_lausuntopyynto_digest, send_email
 from processing.llm_scorer import score_item
 from processing.score_classification import classify_score
 from state_store import (
@@ -97,7 +97,7 @@ def _deliver_digest(
         print(f"\n{len(borderline)} borderline item(s) (score 4-5):")
         for item in sorted(borderline, key=lambda x: -x["score"]):
             print(f"  [{item['score']}/10] {item['proposal'].title}")
-    subject, html_body, text_body = build_daily_digest(flagged, borderline)
+    subject, html_body, text_body = build_lausuntopyynto_digest(flagged, borderline)
     print(f"\nSubject: {subject}")
     print(text_body)
     if dry_run:
@@ -212,7 +212,3 @@ def cmd_lausuntopyynnot(dry_run: bool, ctx: dict | None = None) -> None:
     digest_sent = _deliver_digest(flagged, dry_run, borderline=borderline)
     _record_lausuntopyynto_results(scored_results, digest_sent, seen)
     _save_json(config.SEEN_PROPOSALS_PATH, seen)
-
-
-def cmd_daily(dry_run: bool) -> None:
-    cmd_lausuntopyynnot(dry_run=dry_run)

@@ -16,12 +16,12 @@ from clients.eduskunta import (
     fetch_committee_page,
     parse_agenda_matters,
 )
-from delivery.email import build_weekly_digest, send_email
+from delivery.email import build_valiokunta_digest, send_email
 from processing.llm_scorer import score_item
 from processing.score_classification import classify_score
 from state_store import _append_log, _load_json, _migrate_score_log_split, _save_json
 
-_WEEKLY_COMMITTEES = tuple(config.COMMITTEE_URLS)
+_VALIOKUNTA_COMMITTEES = tuple(config.COMMITTEE_URLS)
 
 
 def _is_agenda(document: Document) -> bool:
@@ -33,7 +33,7 @@ def _collect_new_agendas(
     seen_docs: dict,
 ) -> list[tuple[str, Document]]:
     new_agendas: list[tuple[str, Document]] = []
-    for committee_key in _WEEKLY_COMMITTEES:
+    for committee_key in _VALIOKUNTA_COMMITTEES:
         url = config.COMMITTEE_URLS[committee_key]
         display = config.COMMITTEE_DISPLAY_NAMES[committee_key]
         print(f"Fetching {display}...", flush=True)
@@ -79,7 +79,7 @@ def _mark_agenda_seen(seen_docs: dict, agenda: Document) -> None:
     }
 
 
-def _score_weekly_matter(
+def _score_valiokunta_matter(
     matter: Matter,
     committee_key: str,
     ctx: dict,
@@ -93,7 +93,7 @@ def _score_weekly_matter(
     return result
 
 
-def _record_weekly_matter(
+def _record_valiokunta_matter(
     matter: Matter,
     committee_key: str,
     result: dict,
@@ -115,7 +115,7 @@ def _record_weekly_matter(
     )
 
 
-def _deliver_weekly(
+def _deliver_valiokunta_digest(
     committee_items: dict[str, list[dict]],
     borderline_items: dict[str, list[dict]],
     total_scored: int,
@@ -128,7 +128,7 @@ def _deliver_weekly(
         print("No valiokunta items above log threshold.")
         return False
 
-    subject, html_body, text_body = build_weekly_digest(
+    subject, html_body, text_body = build_valiokunta_digest(
         committee_items,
         week_number,
         total_scored,
@@ -152,7 +152,7 @@ def _deliver_weekly(
     except Exception as exc:
         print(f"ERROR: email delivery failed: {exc}", file=sys.stderr)
         return False
-    print(f"\nWeekly digest sent: {total_flagged} flagged, {total_logged} logged")
+    print(f"\nValiokunta digest sent: {total_flagged} flagged, {total_logged} logged")
     return True
 
 
@@ -181,8 +181,8 @@ def cmd_valiokunta(dry_run: bool, ctx: dict | None = None) -> None:  # noqa: PLR
         print("Aborted.")
         return
 
-    committee_items: dict[str, list[dict]] = {key: [] for key in _WEEKLY_COMMITTEES}
-    borderline_items: dict[str, list[dict]] = {key: [] for key in _WEEKLY_COMMITTEES}
+    committee_items: dict[str, list[dict]] = {key: [] for key in _VALIOKUNTA_COMMITTEES}
+    borderline_items: dict[str, list[dict]] = {key: [] for key in _VALIOKUNTA_COMMITTEES}
     scored_matters: list[tuple[str, str, Matter, dict]] = []
     total_scored = 0
     total_logged = 0
@@ -191,7 +191,7 @@ def cmd_valiokunta(dry_run: bool, ctx: dict | None = None) -> None:  # noqa: PLR
         if agenda.edktunnus not in seen_docs:
             _mark_agenda_seen(seen_docs, agenda)
         for matter in matters:
-            result = _score_weekly_matter(matter, committee_key, ctx)
+            result = _score_valiokunta_matter(matter, committee_key, ctx)
             if result is None:
                 continue
 
@@ -229,19 +229,15 @@ def cmd_valiokunta(dry_run: bool, ctx: dict | None = None) -> None:  # noqa: PLR
             else:
                 print(f"  [DROP {score}/10] {matter.eduskuntatunnus}: {matter.title}")
 
-    digest_sent = _deliver_weekly(
+    digest_sent = _deliver_valiokunta_digest(
         committee_items, borderline_items, total_scored, total_logged, dry_run
     )
     for agenda_id, committee_key, matter, result in scored_matters:
         notified = classify_score(result["score"]) == "flag" and digest_sent
-        _record_weekly_matter(matter, committee_key, result, notified)
+        _record_valiokunta_matter(matter, committee_key, result, notified)
         seen_docs[agenda_id]["matter_scores"][matter.eduskuntatunnus] = {
             "score": result["score"],
             "notified": notified,
         }
 
     _save_json(config.SEEN_DOCUMENTS_PATH, seen_docs)
-
-
-def cmd_weekly(dry_run: bool) -> None:
-    cmd_valiokunta(dry_run=dry_run)

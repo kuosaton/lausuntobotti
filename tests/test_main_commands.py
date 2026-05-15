@@ -11,7 +11,9 @@ from clients.kuluttajaliitto import Statement
 from clients.lausuntopalvelu import Proposal
 
 
-def test_cmd_daily_no_new_proposals_exits_cleanly(state_paths, monkeypatch, capsys) -> None:
+def test_cmd_lausuntopyynnot_no_new_proposals_exits_cleanly(
+    state_paths, monkeypatch, capsys
+) -> None:
 
     proposal = Proposal(
         id="already-seen",
@@ -33,12 +35,14 @@ def test_cmd_daily_no_new_proposals_exits_cleanly(state_paths, monkeypatch, caps
         raise AssertionError("score_item should not be called when there are no new proposals")
 
     monkeypatch.setattr(lausunto_workflow, "score_item", _should_not_run)
-    main.cmd_daily(dry_run=True)
+    main.cmd_lausuntopyynnot(dry_run=True)
     out = capsys.readouterr().out
     assert "Nothing new to score." in out
 
 
-def test_cmd_daily_borderline_item_is_logged_but_not_flagged(state_paths, monkeypatch) -> None:
+def test_cmd_lausuntopyynnot_borderline_item_is_logged_but_not_flagged(
+    state_paths, monkeypatch
+) -> None:
 
     proposal = Proposal(
         id="borderline-1",
@@ -60,7 +64,7 @@ def test_cmd_daily_borderline_item_is_logged_but_not_flagged(state_paths, monkey
         lambda *args, **kwargs: {"score": 5, "rationale": "Rajatapaus", "themes": []},
     )
 
-    main.cmd_daily(dry_run=True)
+    main.cmd_lausuntopyynnot(dry_run=True)
 
     seen = json.loads(state_paths.seen.read_text(encoding="utf-8"))
     assert seen["borderline-1"]["score"] == 5
@@ -82,7 +86,7 @@ def test_cmd_daily_borderline_item_is_logged_but_not_flagged(state_paths, monkey
     assert log_entry["deadline"] is not None
 
 
-def test_cmd_daily_borderline_only_triggers_digest(state_paths, monkeypatch) -> None:
+def test_cmd_lausuntopyynnot_borderline_only_triggers_digest(state_paths, monkeypatch) -> None:
 
     proposal = Proposal(
         id="borderline-only",
@@ -111,9 +115,9 @@ def test_cmd_daily_borderline_only_triggers_digest(state_paths, monkeypatch) -> 
         captured["borderline"] = list(borderline or [])
         return "SUBJ", "<p>H</p>", "TEXT"
 
-    monkeypatch.setattr(lausunto_workflow, "build_daily_digest", _capture_build)
+    monkeypatch.setattr(lausunto_workflow, "build_lausuntopyynto_digest", _capture_build)
 
-    main.cmd_daily(dry_run=True)
+    main.cmd_lausuntopyynnot(dry_run=True)
 
     assert captured["flagged"] == []
     assert len(captured["borderline"]) == 1
@@ -225,7 +229,7 @@ def test_cmd_update_context_refreshes_timestamp_when_unchanged(monkeypatch, caps
     assert "already up to date" in capsys.readouterr().out
 
 
-def test_cmd_daily_handles_scoring_exception(state_paths, monkeypatch) -> None:
+def test_cmd_lausuntopyynnot_handles_scoring_exception(state_paths, monkeypatch) -> None:
 
     proposal = Proposal(
         id="score-fail",
@@ -246,14 +250,14 @@ def test_cmd_daily_handles_scoring_exception(state_paths, monkeypatch) -> None:
 
     monkeypatch.setattr(lausunto_workflow, "score_item", _raise_score)
 
-    main.cmd_daily(dry_run=True)
+    main.cmd_lausuntopyynnot(dry_run=True)
 
     seen = json.loads(state_paths.seen.read_text(encoding="utf-8"))
     assert seen == {}
     assert state_paths.score_log.read_text(encoding="utf-8") == ""
 
 
-def test_cmd_daily_non_dry_run_sends_email(state_paths, monkeypatch) -> None:
+def test_cmd_lausuntopyynnot_non_dry_run_sends_email(state_paths, monkeypatch) -> None:
 
     calls: dict = {}
 
@@ -283,14 +287,16 @@ def test_cmd_daily_non_dry_run_sends_email(state_paths, monkeypatch) -> None:
             {"subject": subject, "html": html_body, "text": text_body}
         ),
     )
-    main.cmd_daily(dry_run=False)
+    main.cmd_lausuntopyynnot(dry_run=False)
     # Real digest reaches send_email with the proposal's title in the body
     assert "Nostettava" in calls["text"]
     assert "Nostettava" in calls["html"]
     assert calls["subject"].startswith("Uusia lausuntopyyntöjä")
 
 
-def test_cmd_daily_send_failure_does_not_mark_notified(state_paths, monkeypatch, capsys) -> None:
+def test_cmd_lausuntopyynnot_send_failure_does_not_mark_notified(
+    state_paths, monkeypatch, capsys
+) -> None:
     proposal = Proposal(
         id="send-fail-1",
         title="Lahetys epaonnistuu",
@@ -316,7 +322,7 @@ def test_cmd_daily_send_failure_does_not_mark_notified(state_paths, monkeypatch,
 
     monkeypatch.setattr(lausunto_workflow, "send_email", _raise_send)
 
-    main.cmd_daily(dry_run=False)
+    main.cmd_lausuntopyynnot(dry_run=False)
 
     captured = capsys.readouterr()
     assert "ERROR: email delivery failed: resend down" in captured.err
@@ -329,7 +335,7 @@ def test_cmd_daily_send_failure_does_not_mark_notified(state_paths, monkeypatch,
     assert log_entry["notified"] is False
 
 
-def test_cmd_daily_declined_send_does_not_mark_notified(state_paths, monkeypatch) -> None:
+def test_cmd_lausuntopyynnot_declined_send_does_not_mark_notified(state_paths, monkeypatch) -> None:
 
     proposal = Proposal(
         id="decline-send-1",
@@ -360,7 +366,7 @@ def test_cmd_daily_declined_send_does_not_mark_notified(state_paths, monkeypatch
         lambda *args, **kwargs: sent.__setitem__("called", True),
     )
 
-    main.cmd_daily(dry_run=False)
+    main.cmd_lausuntopyynnot(dry_run=False)
 
     seen = json.loads(state_paths.seen.read_text(encoding="utf-8"))
     assert seen["decline-send-1"]["notified"] is False
@@ -370,7 +376,7 @@ def test_cmd_daily_declined_send_does_not_mark_notified(state_paths, monkeypatch
     assert sent["called"] is False
 
 
-def test_cmd_daily_aborts_on_user_no(state_paths, monkeypatch, capsys) -> None:
+def test_cmd_lausuntopyynnot_aborts_on_user_no(state_paths, monkeypatch, capsys) -> None:
 
     proposal = Proposal(
         id="abort-1",
@@ -390,7 +396,7 @@ def test_cmd_daily_aborts_on_user_no(state_paths, monkeypatch, capsys) -> None:
 
     monkeypatch.setattr(lausunto_workflow, "score_item", _should_not_score)
 
-    main.cmd_daily(dry_run=True)
+    main.cmd_lausuntopyynnot(dry_run=True)
     out = capsys.readouterr().out
     assert "Aborted." in out
     assert json.loads(state_paths.seen.read_text(encoding="utf-8")) == {}
@@ -398,7 +404,7 @@ def test_cmd_daily_aborts_on_user_no(state_paths, monkeypatch, capsys) -> None:
     assert json.loads(state_paths.flagged.read_text(encoding="utf-8")) == []
 
 
-def test_cmd_daily_dry_run_prints_digest_but_does_not_send(
+def test_cmd_lausuntopyynnot_dry_run_prints_digest_but_does_not_send(
     state_paths, monkeypatch, capsys
 ) -> None:
 
@@ -427,7 +433,7 @@ def test_cmd_daily_dry_run_prints_digest_but_does_not_send(
 
     monkeypatch.setattr(lausunto_workflow, "send_email", _should_not_send)
 
-    main.cmd_daily(dry_run=True)
+    main.cmd_lausuntopyynnot(dry_run=True)
     out = capsys.readouterr().out
     # Real digest is printed (contains the proposal title) but email is not sent
     assert "Dryrun nostettava" in out
@@ -453,7 +459,7 @@ def test_deliver_digest_aborts_when_send_declined(monkeypatch, capsys) -> None:
     ]
     monkeypatch.setattr(
         lausunto_workflow,
-        "build_daily_digest",
+        "build_lausuntopyynto_digest",
         lambda f, borderline=None: ("S", "<p>H</p>", "Body"),
     )
     monkeypatch.setattr(

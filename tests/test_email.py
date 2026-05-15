@@ -111,7 +111,7 @@ def test_build_lausuntopyynto_digest_contains_key_fields() -> None:
         }
     ]
 
-    subject, html_body, text_body = email_mod.build_daily_digest(flagged)
+    subject, html_body, text_body = email_mod.build_lausuntopyynto_digest(flagged)
     published_str = f"{published.day}.{published.month}.{published.year}"
     deadline_str = f"{deadline.day}.{deadline.month}.{deadline.year}"
     assert "Uusia lausuntopyyntöjä" in subject
@@ -129,7 +129,7 @@ def test_build_lausuntopyynto_digest_contains_key_fields() -> None:
     assert "pv" in html_body
 
 
-def test_build_daily_digest_sorts_by_score_descending() -> None:
+def test_build_lausuntopyynto_digest_sorts_by_score_descending() -> None:
     def _proposal(title: str) -> SimpleNamespace:
         return SimpleNamespace(
             title=title,
@@ -145,14 +145,14 @@ def test_build_daily_digest_sorts_by_score_descending() -> None:
         {"proposal": _proposal("Keski"), "score": 7, "rationale": "R", "themes": []},
     ]
 
-    _, _, text_body = email_mod.build_daily_digest(flagged)
+    _, _, text_body = email_mod.build_lausuntopyynto_digest(flagged)
     pos_korkea = text_body.index("Korkea")
     pos_keski = text_body.index("Keski")
     pos_matala = text_body.index("Matala")
     assert pos_korkea < pos_keski < pos_matala
 
 
-def test_build_daily_digest_sorts_by_deadline_within_same_score() -> None:
+def test_build_lausuntopyynto_digest_sorts_by_deadline_within_same_score() -> None:
     def _proposal(title: str, deadline: datetime | None) -> SimpleNamespace:
         return SimpleNamespace(
             title=title,
@@ -178,14 +178,14 @@ def test_build_daily_digest_sorts_by_deadline_within_same_score() -> None:
         {"proposal": _proposal("EiDeadlinea", None), "score": 7, "rationale": "R", "themes": []},
     ]
 
-    _, _, text_body = email_mod.build_daily_digest(flagged)
+    _, _, text_body = email_mod.build_lausuntopyynto_digest(flagged)
     pos_kiireinen = text_body.index("Kiireinen")
     pos_kiireeton = text_body.index("Kiireeton")
     pos_ei = text_body.index("EiDeadlinea")
     assert pos_kiireinen < pos_kiireeton < pos_ei
 
 
-def test_build_daily_digest_deadline_today() -> None:
+def test_build_lausuntopyynto_digest_deadline_today() -> None:
     proposal = SimpleNamespace(
         title="T",
         organization_name="Org",
@@ -193,13 +193,13 @@ def test_build_daily_digest_deadline_today() -> None:
         deadline=datetime.combine(date.today(), datetime.min.time()),
         url="https://example.invalid/p/1",
     )
-    _, _, text_body = email_mod.build_daily_digest(
+    _, _, text_body = email_mod.build_lausuntopyynto_digest(
         [{"proposal": proposal, "score": 7, "rationale": "R", "themes": []}]
     )
     assert "tänään" in text_body
 
 
-def test_build_daily_digest_omits_url_line_when_empty() -> None:
+def test_build_lausuntopyynto_digest_omits_url_line_when_empty() -> None:
     proposal = SimpleNamespace(
         title="Ei urlia",
         organization_name="Org",
@@ -207,7 +207,7 @@ def test_build_daily_digest_omits_url_line_when_empty() -> None:
         deadline=None,
         url="",
     )
-    _, _, text_body = email_mod.build_daily_digest(
+    _, _, text_body = email_mod.build_lausuntopyynto_digest(
         [{"proposal": proposal, "score": 7, "rationale": "R", "themes": []}]
     )
     lines = text_body.splitlines()
@@ -229,11 +229,11 @@ def _digest_item(title: str, score: int) -> dict:
     }
 
 
-def test_build_daily_digest_renders_both_sections_in_order() -> None:
+def test_build_lausuntopyynto_digest_renders_both_sections_in_order() -> None:
     flagged = [_digest_item("Nostettava", 8)]
     borderline = [_digest_item("Rajatapaus", 5)]
 
-    _, html_body, text_body = email_mod.build_daily_digest(flagged, borderline)
+    _, html_body, text_body = email_mod.build_lausuntopyynto_digest(flagged, borderline)
 
     assert "Rajatapauksia" in text_body
     assert text_body.index("Nostettava") < text_body.index("Rajatapauksia")
@@ -242,10 +242,10 @@ def test_build_daily_digest_renders_both_sections_in_order() -> None:
     assert html_body.index("Nostettava") < html_body.index("Rajatapauksia")
 
 
-def test_build_daily_digest_borderline_only_still_renders() -> None:
+def test_build_lausuntopyynto_digest_borderline_only_still_renders() -> None:
     borderline = [_digest_item("Vain rajatapaus", 4)]
 
-    subject, html_body, text_body = email_mod.build_daily_digest([], borderline)
+    subject, html_body, text_body = email_mod.build_lausuntopyynto_digest([], borderline)
 
     assert "Uusia lausuntopyyntöjä" in subject
     assert "Rajatapauksia" in text_body
@@ -254,17 +254,17 @@ def test_build_daily_digest_borderline_only_still_renders() -> None:
     assert "Vain rajatapaus" in html_body
 
 
-def test_build_daily_digest_flagged_only_omits_borderline_header() -> None:
+def test_build_lausuntopyynto_digest_flagged_only_omits_borderline_header() -> None:
     flagged = [_digest_item("Vain nostettava", 8)]
 
-    _, html_body, text_body = email_mod.build_daily_digest(flagged)
+    _, html_body, text_body = email_mod.build_lausuntopyynto_digest(flagged)
 
     assert "Vain nostettava" in text_body
     assert "Rajatapauksia" not in text_body
     assert "Rajatapauksia" not in html_body
 
 
-def test_build_weekly_digest_handles_empty_and_linked_items() -> None:
+def test_build_valiokunta_digest_handles_empty_and_linked_items() -> None:
     committee_items = {
         "talousvaliokunta": [
             {
@@ -279,7 +279,7 @@ def test_build_weekly_digest_handles_empty_and_linked_items() -> None:
         "ymparistovaliokunta": [],
     }
 
-    subject, html_body, text_body = email_mod.build_weekly_digest(
+    subject, html_body, text_body = email_mod.build_valiokunta_digest(
         committee_items=committee_items,
         week_number=17,
         total_scored=9,
@@ -293,7 +293,7 @@ def test_build_weekly_digest_handles_empty_and_linked_items() -> None:
     assert "https://example.invalid/doc/1" in html_body
 
 
-def test_build_weekly_digest_renders_all_priority_committee_sections() -> None:
+def test_build_valiokunta_digest_renders_all_priority_committee_sections() -> None:
     committee_items = {
         "ymparistovaliokunta": [],
         "maa_ja_metsatalousvaliokunta": [],
@@ -323,7 +323,7 @@ def test_build_weekly_digest_renders_all_priority_committee_sections() -> None:
         "ymparistovaliokunta": [],
     }
 
-    _subject, html_body, text_body = email_mod.build_weekly_digest(
+    _subject, html_body, text_body = email_mod.build_valiokunta_digest(
         committee_items=committee_items,
         week_number=17,
         total_scored=3,
@@ -342,7 +342,7 @@ def test_build_weekly_digest_renders_all_priority_committee_sections() -> None:
     assert text_body.index("MAA- JA METSÄTALOUSVALIOKUNTA") < text_body.index("YMPÄRISTÖVALIOKUNTA")
 
 
-def test_build_weekly_digest_renders_borderline_items() -> None:
+def test_build_valiokunta_digest_renders_borderline_items() -> None:
     committee_items = {"talousvaliokunta": []}
     borderline_items = {
         "talousvaliokunta": [
@@ -357,7 +357,7 @@ def test_build_weekly_digest_renders_borderline_items() -> None:
         ]
     }
 
-    _subject, html_body, text_body = email_mod.build_weekly_digest(
+    _subject, html_body, text_body = email_mod.build_valiokunta_digest(
         committee_items=committee_items,
         week_number=17,
         total_scored=1,
@@ -373,7 +373,7 @@ def test_build_weekly_digest_renders_borderline_items() -> None:
     assert "energia" in html_body
 
 
-def test_build_weekly_digest_sorts_items_by_score_descending() -> None:
+def test_build_valiokunta_digest_sorts_items_by_score_descending() -> None:
     committee_items = {
         "talousvaliokunta": [
             {
@@ -423,7 +423,7 @@ def test_build_weekly_digest_sorts_items_by_score_descending() -> None:
         ]
     }
 
-    _subject, html_body, text_body = email_mod.build_weekly_digest(
+    _subject, html_body, text_body = email_mod.build_valiokunta_digest(
         committee_items=committee_items,
         week_number=17,
         total_scored=5,

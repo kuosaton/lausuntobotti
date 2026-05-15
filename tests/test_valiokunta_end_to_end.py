@@ -1,4 +1,4 @@
-"""End-to-end tests for cmd_weekly.
+"""End-to-end tests for cmd_valiokunta.
 
 These tests exercise the committee pipeline — fetch agenda page → parse agenda →
 fetch XML → parse matters → score → log → render → send — with only external
@@ -59,7 +59,7 @@ AGENDA_XML = """
 """
 
 
-def test_cmd_weekly_full_pipeline_renders_real_digest(state_paths, monkeypatch) -> None:
+def test_cmd_valiokunta_full_pipeline_renders_real_digest(state_paths, monkeypatch) -> None:
     seen_documents = state_paths.seen.parent / "seen_documents.json"
     seen_documents.write_text("{}", encoding="utf-8")
     state_paths.context.write_text(
@@ -68,7 +68,7 @@ def test_cmd_weekly_full_pipeline_renders_real_digest(state_paths, monkeypatch) 
     )
 
     monkeypatch.setattr(config, "SEEN_DOCUMENTS_PATH", seen_documents)
-    monkeypatch.setattr(valiokunta_workflow, "_WEEKLY_COMMITTEES", ("talousvaliokunta",))
+    monkeypatch.setattr(valiokunta_workflow, "_VALIOKUNTA_COMMITTEES", ("talousvaliokunta",))
     monkeypatch.setenv("SENDER_EMAIL", "botti@example.com")
     monkeypatch.setenv("RECIPIENT_EMAIL", "vastaanottaja@example.com")
     monkeypatch.setenv("RESEND_API_KEY", "re_test_key")
@@ -106,11 +106,11 @@ def test_cmd_weekly_full_pipeline_renders_real_digest(state_paths, monkeypatch) 
 
     def fake_send(params):
         captured_email.update(params)
-        return {"id": "weekly-fake-id"}
+        return {"id": "valiokunta-fake-id"}
 
     monkeypatch.setattr(resend.Emails, "send", staticmethod(fake_send))
 
-    main.cmd_weekly(dry_run=False)
+    main.cmd_valiokunta(dry_run=False)
 
     assert captured_email["from"] == "botti@example.com"
     assert captured_email["to"] == ["vastaanottaja@example.com"]

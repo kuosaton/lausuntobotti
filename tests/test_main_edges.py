@@ -23,7 +23,7 @@ def test_save_context_writes_json(state_paths) -> None:
     assert stored == payload
 
 
-def test_cmd_daily_warns_if_distribution_lookup_fails_and_drops_low_score(
+def test_cmd_lausuntopyynnot_warns_if_distribution_lookup_fails_and_drops_low_score(
     state_paths, monkeypatch, capsys
 ) -> None:
     proposal = Proposal(
@@ -48,7 +48,7 @@ def test_cmd_daily_warns_if_distribution_lookup_fails_and_drops_low_score(
         lambda *args, **kwargs: {"score": 2, "rationale": "Ei relevanssia", "themes": []},
     )
 
-    main.cmd_daily(dry_run=True)
+    main.cmd_lausuntopyynnot(dry_run=True)
     captured = capsys.readouterr()
     assert "[WARN] could not read participation info" in captured.err
     assert "[DROP 2/10]" in captured.out
@@ -129,7 +129,7 @@ def test_cmd_preview_digest_valid_deadline_parsed(state_paths, monkeypatch) -> N
     captured: list = []
     monkeypatch.setattr(
         main,
-        "build_daily_digest",
+        "build_lausuntopyynto_digest",
         lambda flagged, borderline=None: captured.extend(flagged) or ("S", "H", "T"),
     )
     main.cmd_preview_digest()

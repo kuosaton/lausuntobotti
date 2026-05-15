@@ -9,7 +9,7 @@ import workflows.lausuntopyynnot as lausunto_workflow
 from clients.lausuntopalvelu import Proposal
 
 
-def test_cmd_daily_skips_when_kuluttajaliitto_already_on_distribution_list(
+def test_cmd_lausuntopyynnot_skips_when_kuluttajaliitto_already_on_distribution_list(
     tmp_path, monkeypatch
 ) -> None:
     state_dir = tmp_path / "state"
@@ -65,8 +65,8 @@ def test_cmd_daily_skips_when_kuluttajaliitto_already_on_distribution_list(
 
     monkeypatch.setattr(lausunto_workflow, "score_item", should_not_score)
 
-    main.cmd_daily(dry_run=True)
-    main.cmd_daily(dry_run=True)
+    main.cmd_lausuntopyynnot(dry_run=True)
+    main.cmd_lausuntopyynnot(dry_run=True)
 
     assert captured_lookup == {"calls": 1, "pid": proposal.id, "name": "Kuluttajaliit"}
 
@@ -83,7 +83,9 @@ def test_cmd_daily_skips_when_kuluttajaliitto_already_on_distribution_list(
     assert flagged == []
 
 
-def test_cmd_daily_skips_when_kuluttajaliitto_already_responded(tmp_path, monkeypatch) -> None:
+def test_cmd_lausuntopyynnot_skips_when_kuluttajaliitto_already_responded(
+    tmp_path, monkeypatch
+) -> None:
     state_dir = tmp_path / "state"
     context_dir = tmp_path / "context"
     state_dir.mkdir()
@@ -130,7 +132,7 @@ def test_cmd_daily_skips_when_kuluttajaliitto_already_responded(tmp_path, monkey
 
     monkeypatch.setattr(lausunto_workflow, "score_item", should_not_score)
 
-    main.cmd_daily(dry_run=True)
+    main.cmd_lausuntopyynnot(dry_run=True)
 
     seen = json.loads(seen_path.read_text(encoding="utf-8"))
     assert seen[proposal.id]["status"] == "skipped_already_responded"

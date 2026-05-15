@@ -16,7 +16,7 @@ from dotenv import load_dotenv
 import config
 from clients.eduskunta import build_matter_url
 from clients.kuluttajaliitto import build_context, fetch_statements
-from delivery.email import build_daily_digest, build_weekly_digest, send_email
+from delivery.email import build_lausuntopyynto_digest, build_valiokunta_digest, send_email
 from processing.score_classification import classify_score
 from state_store import (
     _load_context,
@@ -100,16 +100,8 @@ def cmd_lausuntopyynnot(dry_run: bool) -> None:
     _run_lausuntopyynnot_workflow(dry_run=dry_run, ctx=_ensure_context_fresh())
 
 
-def cmd_daily(dry_run: bool) -> None:
-    cmd_lausuntopyynnot(dry_run=dry_run)
-
-
 def cmd_valiokunta(dry_run: bool) -> None:
     _run_valiokunta_workflow(dry_run=dry_run, ctx=_ensure_context_fresh())
-
-
-def cmd_weekly(dry_run: bool) -> None:
-    cmd_valiokunta(dry_run=dry_run)
 
 
 def _read_borderline_entries(days: int = 7, source: str = _SOURCE_LAUSUNTOPYYNNOT) -> list[dict]:
@@ -269,7 +261,7 @@ def cmd_preview_digest(days: int = 7) -> None:
     if not flagged and not borderline:
         print("Nothing to preview: no flagged lausuntopyyntö items and no borderline items.")
         return
-    subject, _html_body, text_body = build_daily_digest(flagged, borderline)
+    subject, _html_body, text_body = build_lausuntopyynto_digest(flagged, borderline)
     print(f"Subject: {subject}\n")
     print(text_body)
 
@@ -341,7 +333,7 @@ def _deliver_valiokunta_digest(
 ) -> bool:
     total_flagged = sum(len(items) for items in committee_items.values())
     week_number = datetime.now(UTC).isocalendar().week
-    subject, html_body, text_body = build_weekly_digest(
+    subject, html_body, text_body = build_valiokunta_digest(
         committee_items,
         week_number,
         total_scored,

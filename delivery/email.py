@@ -107,7 +107,7 @@ def send_email(subject: str, html_body: str, text_body: str = "") -> str:
 
 
 # ---------------------------------------------------------------------------
-# Daily lausuntopalvelu digest
+# Lausuntopyyntö digest
 # ---------------------------------------------------------------------------
 
 
@@ -118,7 +118,7 @@ def _sort_items(items: list[dict]) -> list[dict]:
     )
 
 
-def _sort_weekly_items(items: list[dict]) -> list[dict]:
+def _sort_valiokunta_items(items: list[dict]) -> list[dict]:
     return sorted(items, key=lambda item: -item["score"])
 
 
@@ -193,7 +193,7 @@ def _render_html_entry(item: dict) -> str:
         </div>"""
 
 
-def build_daily_digest(
+def build_lausuntopyynto_digest(
     flagged: list[dict], borderline: list[dict] | None = None
 ) -> tuple[str, str, str]:
     today = _fmt_date(date.today())
@@ -256,11 +256,11 @@ def build_daily_digest(
 
 
 # ---------------------------------------------------------------------------
-# Weekly committee digest
+# Valiokunta digest
 # ---------------------------------------------------------------------------
 
 
-def _weekly_text_body(
+def _valiokunta_text_body(
     committee_items: dict[str, list[dict]],
     borderline_items: dict[str, list[dict]],
     week_number: int,
@@ -276,7 +276,7 @@ def _weekly_text_body(
             lines.append("Ei nostettavia asioita.\n")
             continue
         for item in items:
-            fields = _weekly_entry_fields(item)
+            fields = _valiokunta_entry_fields(item)
             lines += [
                 f"▸ {fields['title']}",
                 f"   Tunnus:     {fields['eduskuntatunnus']}",
@@ -288,7 +288,7 @@ def _weekly_text_body(
         if borderline:
             lines.append("Rajatapauksia:\n")
             for item in borderline:
-                fields = _weekly_entry_fields(item)
+                fields = _valiokunta_entry_fields(item)
                 lines += [
                     f"▸ [{fields['score']}/10] {fields['title']}",
                     f"   Tunnus:     {fields['eduskuntatunnus']}",
@@ -299,10 +299,10 @@ def _weekly_text_body(
     return "\n".join(lines)
 
 
-def _weekly_html_entries(items: list[dict]) -> str:
+def _valiokunta_html_entries(items: list[dict]) -> str:
     entries_html = ""
     for item in items:
-        fields = _weekly_entry_fields(item)
+        fields = _valiokunta_entry_fields(item)
         themes = ", ".join(fields["themes"])
         title_html = (
             f'<a href="{fields["url"]}" style="color:#1a56a0;text-decoration:none;">{fields["title"]}</a>'
@@ -322,7 +322,7 @@ def _weekly_html_entries(items: list[dict]) -> str:
     return entries_html
 
 
-def _weekly_html_sections(
+def _valiokunta_html_sections(
     committee_items: dict[str, list[dict]],
     borderline_items: dict[str, list[dict]],
 ) -> str:
@@ -330,20 +330,20 @@ def _weekly_html_sections(
     for key, items in committee_items.items():
         name = _committee_display_name(key)
         borderline = borderline_items.get(key, [])
-        items_html = _weekly_html_entries(items)
+        items_html = _valiokunta_html_entries(items)
         if not items and not borderline:
             items_html = '<p style="color:#888;font-size:13px;">Ei nostettavia asioita.</p>'
         if borderline:
             items_html += f"""
             <p style="margin:18px 0 8px;font-size:13px;font-weight:bold;color:#666;">Rajatapauksia</p>
-            {_weekly_html_entries(borderline)}"""
+            {_valiokunta_html_entries(borderline)}"""
         sections_html += f"""
         <h3 style="color:#1a56a0;border-bottom:1px solid #ddd;padding-bottom:6px;">{name}</h3>
         {items_html}"""
     return sections_html
 
 
-def _weekly_summary(
+def _valiokunta_summary(
     total_scored: int,
     total_flagged: int,
     total_logged: int,
@@ -363,7 +363,7 @@ def _weekly_summary(
     return text_lines, html
 
 
-class _WeeklyEntryFields(TypedDict):
+class _ValiokuntaEntryFields(TypedDict):
     title: str
     url: str
     eduskuntatunnus: str
@@ -372,7 +372,7 @@ class _WeeklyEntryFields(TypedDict):
     themes: list[str]
 
 
-def _weekly_entry_fields(item: dict) -> _WeeklyEntryFields:
+def _valiokunta_entry_fields(item: dict) -> _ValiokuntaEntryFields:
     return {
         "title": item["title"],
         "url": item.get("url", ""),
@@ -393,7 +393,7 @@ def _order_committee_mapping(items: dict[str, list[dict]]) -> dict[str, list[dic
     return ordered
 
 
-def build_weekly_digest(
+def build_valiokunta_digest(
     committee_items: dict[str, list[dict]],
     week_number: int,
     total_scored: int,
@@ -404,20 +404,20 @@ def build_weekly_digest(
     committee_items = _order_committee_mapping(committee_items)
     borderline_items = borderline_items or {key: [] for key in committee_items}
     borderline_items = _order_committee_mapping(borderline_items)
-    committee_items = {key: _sort_weekly_items(items) for key, items in committee_items.items()}
+    committee_items = {key: _sort_valiokunta_items(items) for key, items in committee_items.items()}
     borderline_items = {
-        key: _sort_weekly_items(borderline_items.get(key, [])) for key in committee_items
+        key: _sort_valiokunta_items(borderline_items.get(key, [])) for key in committee_items
     }
     total_flagged = sum(len(v) for v in committee_items.values())
-    summary_lines, summary_html = _weekly_summary(total_scored, total_flagged, total_logged)
-    text_body = _weekly_text_body(
+    summary_lines, summary_html = _valiokunta_summary(total_scored, total_flagged, total_logged)
+    text_body = _valiokunta_text_body(
         committee_items,
         borderline_items,
         week_number,
         total_flagged,
         summary_lines,
     )
-    sections_html = _weekly_html_sections(committee_items, borderline_items)
+    sections_html = _valiokunta_html_sections(committee_items, borderline_items)
     html_body = f"""<!DOCTYPE html>
 <html lang="fi">
 <head><meta charset="utf-8"><title>{subject}</title></head>

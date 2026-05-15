@@ -1,8 +1,8 @@
-"""End-to-end tests for cmd_daily.
+"""End-to-end tests for cmd_lausuntopyynnot.
 
 These tests exercise the full pipeline — fetch → score → flag/log → render → send —
 with only the external boundaries stubbed (HTTP, LLM, Resend). Internal helpers like
-build_daily_digest and _append_flagged run for real, so a regression in any handoff
+build_lausuntopyynto_digest and _append_flagged run for real, so a regression in any handoff
 between them (field renames, dropped keys, format changes) is caught here.
 """
 
@@ -18,7 +18,7 @@ import workflows.lausuntopyynnot as lausunto_workflow
 from clients.lausuntopalvelu import Proposal
 
 
-def test_cmd_daily_full_pipeline_renders_real_digest(state_paths, monkeypatch) -> None:
+def test_cmd_lausuntopyynnot_full_pipeline_renders_real_digest(state_paths, monkeypatch) -> None:
     """Exercise fetch → score → render → send with real digest building.
 
     Only stubs HTTP, LLM, Resend, and the prompts. Asserts that the email
@@ -104,13 +104,13 @@ def test_cmd_daily_full_pipeline_renders_real_digest(state_paths, monkeypatch) -
 
     monkeypatch.setattr(resend.Emails, "send", staticmethod(fake_send))
 
-    main.cmd_daily(dry_run=False)
+    main.cmd_lausuntopyynnot(dry_run=False)
 
     # Email was actually sent
     assert captured_email["from"] == "botti@example.com"
     assert captured_email["to"] == ["vastaanottaja@example.com"]
 
-    # Subject is the date-stamped daily form
+    # Subject is the date-stamped lausuntopyyntö form
     today = date.today()
     assert captured_email["subject"] == (
         f"Uusia lausuntopyyntöjä, {today.day}.{today.month}.{today.year}"
@@ -139,8 +139,8 @@ def test_cmd_daily_full_pipeline_renders_real_digest(state_paths, monkeypatch) -
     assert "drop-e2e" not in text
 
 
-def test_cmd_daily_persists_flagged_with_complete_shape(state_paths, monkeypatch) -> None:
-    """End-to-end: cmd_daily writes the full flagged record to nostetut.json.
+def test_cmd_lausuntopyynnot_persists_flagged_with_complete_shape(state_paths, monkeypatch) -> None:
+    """End-to-end: cmd_lausuntopyynnot writes the full flagged record to nostetut.json.
 
     This is the contract used by cmd_resend_digest / cmd_preview_digest when they
     re-read flagged items off disk, so every field must round-trip.
@@ -176,7 +176,7 @@ def test_cmd_daily_persists_flagged_with_complete_shape(state_paths, monkeypatch
     monkeypatch.setenv("SENDER_EMAIL", "x@example.com")
     monkeypatch.setenv("RECIPIENT_EMAIL", "y@example.com")
 
-    main.cmd_daily(dry_run=False)
+    main.cmd_lausuntopyynnot(dry_run=False)
 
     flagged_records = json.loads(state_paths.flagged.read_text(encoding="utf-8"))
     assert len(flagged_records) == 1

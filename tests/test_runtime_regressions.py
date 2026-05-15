@@ -12,7 +12,9 @@ from clients.lausuntopalvelu import Proposal
 from processing import llm_scorer
 
 
-def test_cmd_daily_uses_open_client_for_recipient_lookup(state_paths, monkeypatch) -> None:
+def test_cmd_lausuntopyynnot_uses_open_client_for_recipient_lookup(
+    state_paths, monkeypatch
+) -> None:
     del state_paths  # fixture pins config paths; we don't read any back
     proposal = Proposal(
         id="client-open-check",
@@ -58,7 +60,7 @@ def test_cmd_daily_uses_open_client_for_recipient_lookup(state_paths, monkeypatc
         lambda *args, **kwargs: {"score": 5, "rationale": "ok", "themes": []},
     )
 
-    main.cmd_daily(dry_run=True)
+    main.cmd_lausuntopyynnot(dry_run=True)
     assert seen_lookup_state["checked"] is True
 
 
