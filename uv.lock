@@ -314,7 +314,7 @@ wheels = [
 
 [[package]]
 name = "lausuntobotti"
-version = "0.4.0"
+version = "0.4.0a1"
 source = { virtual = "." }
 dependencies = [
     { name = "anthropic" },
